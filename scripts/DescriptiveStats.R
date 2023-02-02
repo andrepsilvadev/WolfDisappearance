@@ -4,7 +4,12 @@
 source("scripts/libraries.R")
 source("scripts/readData.R")
 
-p <- ggplot(data = dataClean,
+#####
+## Total cases of disappearance
+#####
+
+## total number of cases --------------------------------------------------
+p <- ggplot(data = cleandata,
             aes(x = Fate, fill = sex)) + 
   #viridis::scale_fill_viridis(discrete=TRUE) +
   geom_histogram(stat = "count") +
@@ -19,6 +24,10 @@ p <- ggplot(data = dataClean,
   theme_minimal()
 p
 
+## total number of records per country ---------------------------------------
+subset <- cleandata %>%
+  filter(Fate %in% c("illegal","legal"))
+
 p1 <- ggplot(data = subset,
              aes(x = Country_fatefile)) + 
   #viridis::scale_fill_viridis(discrete=TRUE) +
@@ -28,6 +37,7 @@ p1 <- ggplot(data = subset,
   theme_minimal()
 p1
 
+## total number of illegal and legal records per municipality -------------------
 p2 <- ggplot(data = subset,
              aes(x = KommunerNamn)) + 
   #viridis::scale_fill_viridis(discrete=TRUE) +
@@ -37,8 +47,8 @@ p2 <- ggplot(data = subset,
   theme_minimal()
 p2
 
-
-p3 <- ggplot(data = dataClean,
+# total number of records per municipality -------------------------------------
+p3 <- ggplot(data = cleandata,
             aes(x = KommunerNamn, fill = Fate)) + 
   #viridis::scale_fill_viridis(discrete=TRUE) +
   geom_histogram(stat = "count") +
@@ -53,10 +63,8 @@ p3 <- ggplot(data = dataClean,
   theme_minimal()
 p3
 
-subset <- dataClean %>%
-  filter(Fate %in% c("illegal","legal"))
-
-p3 <- ggplot(data = subset,
+# total number of legal and illegal records per municipality -------------------
+p4 <- ggplot(data = subset,
              aes(x = forcats::fct_infreq(KommunerNamn), fill = Fate)) + 
   geom_bar(stat = "count") +
   scale_x_discrete(guide = guide_axis(angle = 90)) +
@@ -69,26 +77,14 @@ p3 <- ggplot(data = subset,
   ylab("Total Number of Individuals") +
   ggtitle(label = "Wolf fate (1998-2020)") + 
   theme_minimal()
-p3
+p4
 
+ggsave("output/IllegalAndLegalRecordsPerMunicipality.png",
+       p4, width = 14, height = 6, dpi = 600, bg = "white")
 
-next
-repeated id - wolves recaptured? - used only fate from the last year captured
-mod_id, SLU_id
-ids that have two numbers
-673 individuals!?
-  cannot be total number of individuals ? is it?
-  location of each class in space
-what does fate = "other" mean? (other old age)
-confirmed illegal = 1 ?
-  what is coordinate system?
-  rewrite column names
-
-prepare files to discuss tmrw
-
-#####
+##### -------------------------------------------------------------------------
 ## Spatial distribution of disappearance data
-#####
+##### -------------------------------------------------------------------------
 
 # I used the upload button to add files in local machine
 norway <- sf::st_read("data/spatialData/gadm36_NOR_2.shp")
@@ -98,13 +94,13 @@ scandinavia <- rbind(norway, sweden) %>%
 reindeerhusbandry <- sf::st_read("data/spatialData/TamreinNoSv.shp") #%>% #UTM33
   #st_transform(crs = st_crs(scandinavia))
 
-subsetSpatial <- st_as_sf(x = dataClean,
+subsetSpatial <- st_as_sf(x = cleandata,
                           coords = c("X_coordinate_fatefile","Y_coordinate_fatefile"),
                           crs = "EPSG:3021") %>% #RT90
   st_transform(crs = st_crs(scandinavia)) %>%
   filter(Fate %in% c("illegal","legal")) # having problems plotting all categories R cloud
 
-p4 <- ggplot() +
+p5 <- ggplot() +
       geom_sf(data = scandinavia) +
       geom_sf(data = reindeerhusbandry,
           aes(fill="Reindeer husbandry area",alpha = 0.05)) +
@@ -115,7 +111,7 @@ p4 <- ggplot() +
       ggtitle(label = "Wolf fate (1998-2020)") + 
       geom_text(size = 30) +
       theme_minimal()
-p4
+p5
 ggsave("output/WolfFateSpatialDistribution.png",
        p4, width = 14, height = 10, dpi = 600, bg = "white")
 
@@ -126,8 +122,9 @@ ggsave("output/WolfFateSpatialDistribution.png",
 
 points <- subsetSpatial %>%
   select("Fate","geometry") %>%
-  slice_sample(10)
+  slice_sample(n = 10)
 
+#crashes, i guess ram is not enough....
 intersection <- st_intersection(x = scandinavia, y = points)
 
 yellowlegal <- subsetSpatial %>%
@@ -152,7 +149,7 @@ cordatalong <- cordata %>%
     values_to = "value"
   )
 
-p4 <- ggplot(data = cordatalong,
+p6 <- ggplot(data = cordatalong,
             aes(x = value)) +
   geom_histogram(bins = 30) +
   facet_wrap(~variable, scales = "free_x") +
@@ -160,7 +157,7 @@ p4 <- ggplot(data = cordatalong,
   ggtitle(label = "Territory features") + 
   theme_minimal() +
   theme(text = element_text(size = 20))
-p4
+p6
 
 ggsave("output/explanatoryVariableDistribution.png",
        p4, width = 12, height = 10, dpi = 600, bg = "white")
@@ -181,7 +178,7 @@ get_upper_tri <- function(cormat){
 upper_tri <- get_upper_tri(cormat)
 melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
 
-p5 <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+p7 <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
   geom_tile(color = "white") +
   scale_fill_viridis_c() +
   ggtitle(label = "Spearman correlation - continuous variables") + 
@@ -190,7 +187,7 @@ p5 <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
                                    hjust = 1, size = 12)) +
   theme(axis.text.y = element_text(size = 12)) +
   geom_text(aes(Var2, Var1, label = value), color = "white", size = 4)
-p5  
+p7  
 
 ggsave("output/explanatoryVariableCorrelation.png",
        p5, width = 12, height = 5, dpi = 600, bg = "white")
