@@ -1,14 +1,15 @@
 # Descriptive stats ##
 ## Andre P. Silva ##
 
+## libraries -------------------------------------------------------------------
 source("scripts/libraries.R")
 source("scripts/readData.R")
 
-#####
+##### --------------------------------------------------------------------------
 ## Total cases of disappearance
-#####
+##### --------------------------------------------------------------------------
 
-## total number of cases --------------------------------------------------
+## total number of cases -------------------------------------------------------
 p <- ggplot(data = cleandata,
             aes(x = Fate, fill = sex)) + 
   #viridis::scale_fill_viridis(discrete=TRUE) +
@@ -113,11 +114,12 @@ p5 <- ggplot() +
       theme_minimal()
 p5
 ggsave("output/WolfFateSpatialDistribution.png",
-       p4, width = 14, height = 10, dpi = 600, bg = "white")
+       p5, width = 14, height = 10, dpi = 600, bg = "white")
 
 
 #####
-## Proportion of disappearance data per county
+## Proportion of disappearance data per county (not working at the momnet, npt enough RAM is the cloud
+#free version for the instersection?)
 #####
 
 points <- subsetSpatial %>%
@@ -160,7 +162,7 @@ p6 <- ggplot(data = cordatalong,
 p6
 
 ggsave("output/explanatoryVariableDistribution.png",
-       p4, width = 12, height = 10, dpi = 600, bg = "white")
+       p6, width = 12, height = 10, dpi = 600, bg = "white")
 
 #####
 ## Explanatory variables - correlation
@@ -190,7 +192,7 @@ p7 <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
 p7  
 
 ggsave("output/explanatoryVariableCorrelation.png",
-       p5, width = 12, height = 5, dpi = 600, bg = "white")
+       p7, width = 12, height = 5, dpi = 600, bg = "white")
 
 #####
 ## Descriptive stats - comparison explanatory variables between
@@ -206,7 +208,7 @@ boxplotdata <- cleandata %>%
     values_to = "value"
   )
 
-bp <- ggplot(boxplotdata, aes(x=Fate, y=value, group=Fate)) + 
+p8 <- ggplot(boxplotdata, aes(x=Fate, y=value, group=Fate)) + 
   geom_boxplot(aes(fill=Fate)) +
   # trying to hide outlier values
   #geom_boxplot(aes(fill=Fate), outlier.shape = NA) +
@@ -214,8 +216,12 @@ bp <- ggplot(boxplotdata, aes(x=Fate, y=value, group=Fate)) +
   #scale_fill_viridis_d() +
   facet_wrap(~variable, scales = "free_y") +
   ggtitle(label = "Explanatory variables in illegal vs legal fate") + 
-  theme_minimal()
-bp
+  theme_minimal() +
+  theme(text = element_text(size = 20))
+p8
+
+ggsave("output/explanatoryVarsIllegalvsLegal.png",
+       p8, width = 16, height = 10, dpi = 600, bg = "white")
 
 number of neigbour territories is categorical so boxplot cannot be used
 

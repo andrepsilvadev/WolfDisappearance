@@ -1,6 +1,17 @@
 # Generalized Linear Mixed-Effect Model (GLMM) ##
 ## Andre P. Silva ##
 
+## libraries -------------------------------------------------------------------
+source("scripts/libraries.R")
+
+# data
+data_frame(a = rnorm(10), b = rnorm(10))
+modeldata <- cleandata %>%
+  select("Fate", "ruggedness_mean","pop_mean", "Fi",
+         "hunt_county", "number_neighbour_terr")
+
+# individual, sex, year as random effects (how to account for multiple random effects?)
+
 #Data input
 mlpe.dat <- data.frame(int = int, #IGK matrix from Google Images
                        int.lit = intLit, #IGK matrix from Literature
@@ -17,6 +28,8 @@ mlpe.dat <- data.frame(int = int, #IGK matrix from Google Images
 )
 
 mlpe.dat <- mlpe.dat[complete.cases(mlpe.dat),]
+
+
 
 #######################################################################################################
 #MODEL FITTING AND SELECTION (Generalized Linear Mixed-Effects Models with "Killer" as random effect)
