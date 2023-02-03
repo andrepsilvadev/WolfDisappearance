@@ -5,10 +5,28 @@
 source("scripts/libraries.R")
 
 # data
-data_frame(a = rnorm(10), b = rnorm(10))
 modeldata <- cleandata %>%
+  ungroup() %>% 
+  filter(Fate %in% c("illegal","legal")) %>%
   select("Fate", "ruggedness_mean","pop_mean", "Fi",
-         "hunt_county", "number_neighbour_terr")
+         "hunt_county", "number_neighbour_terr") %>%
+  rename(fate = Fate,
+         terrRug = ruggedness_mean,
+         humPop = pop_mean,
+         fi = Fi,
+         mooseHunt = hunt_county,
+         wolfNeighbour =  number_neighbour_terr) %>%
+  mutate(fate = as.factor(recode(fate, 'illegal'='1', 'legal'='0')))
+head(modeldata)
+
+# scaled data  
+modeldatascaled <- modeldata %>% 
+  mutate_at(c("terrRug", "humPop", "fi", "mooseHunt", "wolfNeighbour"),
+            ~(scale(.) %>% as.vector))
+head(modeldatascaled)
+
+
+
 
 # individual, sex, year as random effects (how to account for multiple random effects?)
 
