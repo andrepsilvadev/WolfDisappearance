@@ -2,7 +2,7 @@
 ## Andre P. Silva ##
 
 data <- readr::read_csv("data/rawData/rawData.csv")
-idvars <- c(colnames(data)[1:13], "SLU-ID")
+idvars <- c(colnames(data)[1:13], "KommunerNamn", "SLU-ID")
 explanatoryvars <- c("ruggedness_mean", "average_gravel_km", "average_paved_km",
                      "pop_mean", "mean_snow", "hunt_afo", "hunt_county",
                      "Fi", "number_neighbour_terr")
