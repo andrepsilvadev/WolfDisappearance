@@ -3,14 +3,17 @@
 
 ## libraries -------------------------------------------------------------------
 source("scripts/libraries.R")
+source("scripts/readData.R")
 
-# data
+# data ------------------------------------------------------------------
 modeldata <- cleandata %>%
   ungroup() %>% 
   filter(Fate %in% c("illegal","legal")) %>%
-  select("Fate", "ruggedness_mean","pop_mean", "Fi",
+  select("Fate", "SLU-ID", "Spring", "ruggedness_mean","pop_mean", "Fi",
          "hunt_county", "number_neighbour_terr") %>%
   rename(fate = Fate,
+         id = `SLU-ID`,
+         Spring = Spring,
          terrRug = ruggedness_mean,
          humPop = pop_mean,
          fi = Fi,
@@ -22,10 +25,20 @@ head(modeldata)
 # scaled data  
 modeldatascaled <- modeldata %>% 
   mutate_at(c("terrRug", "humPop", "fi", "mooseHunt", "wolfNeighbour"),
-            ~(scale(.) %>% as.vector))
+            ~(scale(.) %>% as.vector)) %>%
+  mutate(humPop2 = humPop^2)
 head(modeldatascaled)
 
+# list of candidate models
+Cand.mod <- list()
+# global model
+modGlobal <- glmer(fate ~ terrRug + humPop + humPop2 + fi + mooseHunt + wolfNeighbour + (1 | Spring), data = modeldatascaled, family = binomial)
 
+
+
+see interpretation of glmer models, calculation of confidence intervals and  interpretations
+https://data.library.virginia.edu/getting-started-with-binomial-generalized-linear-mixed-models/
+  
 
 
 # individual, sex, year as random effects (how to account for multiple random effects?)
