@@ -21,9 +21,13 @@ p <- ggplot(data = cleandata,
             vjust=0,
             size=3) +
   ylab("Total Number of Individuals") +
-  ggtitle(label = "Wolf fate (1998-2020)") + 
+  ggtitle(label = "Wolf fate (1998-2021)") + 
   theme_minimal()
 p
+
+ggsave("output/wolfFateCorrected.png",
+       p, width = 7, height = 5, dpi = 600, bg = "white")
+
 
 ## total number of records per country ---------------------------------------
 subset <- cleandata %>%
@@ -141,8 +145,8 @@ scandinavia$PropIllegal <- subsetSpatial$illegal/(subsetSpatial$illegal + subset
 #####
 ## Explanatory variables - distribution
 #####
-
-cordata <- cleandata %>% select(all_of(explanatoryVars))
+explanatoryvars <- c(explanatoryvars, "dogattack")
+cordata <- cleandata2 %>% select(all_of(explanatoryvars))
 
 cordatalong <- cordata %>% 
   pivot_longer(

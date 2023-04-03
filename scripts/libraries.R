@@ -1,7 +1,7 @@
 library(easypackages)
 easypackages::packages("credentials","tidyverse","reshape2",
                        "sf", 
-                       "lme4", "DHARMa", "performance")
+                       "lme4", "DHARMa", "performance", "AICcmodavg")
   
 #Current token
 #credentials::set_github_pat("TOKEN")

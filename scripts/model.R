@@ -31,15 +31,63 @@ head(modeldatascaled)
 
 # list of candidate models
 Cand.mod <- list()
+# poaching
+Cand.mod[[1]] <- glmer(fate ~ terrRug + humPop + mooseHunt + dogattack + RHA + (1 | Spring), data = modeldatascaled, family = binomial)
+# best of poaching + inbreeding
+Cand.mod[[2]] <- glmer(fate ~ humPop + fi + (1 | Spring), data = modeldatascaled, family = binomial)
+# best of poaching + competition
+Cand.mod[[3]] <- glmer(fate ~ humPop + wolfNeighbour + (1 | Spring), data = modeldatascaled, family = binomial)
 # global model
-modGlobal <- glmer(fate ~ terrRug + humPop + humPop2 + fi + mooseHunt + wolfNeighbour + (1 | Spring), data = modeldatascaled, family = binomial)
+Cand.mod[[4]] <- glmer(fate ~ terrRug + humPop + fi + mooseHunt + wolfNeighbour + dogattack + (1 | Spring), data = modeldatascaled, family = binomial)
+# null model
+Cand.mod[[5]] <- glmer(fate ~ 1 + (1 | Spring), data = modeldatascaled, family = binomial)
 
+#Assign names to each model
+Modnames <- c("Poaching", "Poaching + Inbreeding", "Poaching + Competition", 
+              "Global", "Null")
 
+#Model selection table based on AIC
+aictab(cand.set = Cand.mod, modnames = Modnames)
+
+#EVIDENCE RATIO
+evidence(aictab(cand.set = Cand.mod, modnames = Modnames))
+
+#CONFIDENCE SET
+confset(cand.set = Cand.mod, modnames = Modnames, second.ord = TRUE,
+        method = "raw")
+
+#MODEL FIT
+#r2_nakagawa() - marginal and conditional r-squared value for mixed effects models with complex random effects structures
+library(performance)
+r2_nakagawa(Cand.mod[[4]])
+
+# Residual diagnostics (DHARMa)
+fittedModel <- Cand.mod[[4]]
+simulationOutput <- simulateResiduals(fittedModel = fittedModel, n = 250)
+simulationOutput$scaledResiduals
+# We would expect: 
+#a uniform (flat) distribution of the overall residuals; 
+#uniformity in y direction if we plot against any predictor.
+
+#Plotting the scaled residuals
+plot(simulationOutput)
+plot(simulationOutput, asFactor = T) #Should we plot as factor for a Binomial response?
+
+#Formal goodness-of-fit tests on the scaled residuals
+testResiduals(simulationOutput)
+#ZeroInflation test
+testZeroInflation(simulationOutput)
+testDispersion(simulationOutput)
+testSpatialAutocorrelation(simulationOutput) 
+
+confint(modGlobal)
+r2_nakagawa(modGlobal)
 
 see interpretation of glmer models, calculation of confidence intervals and  interpretations
 https://data.library.virginia.edu/getting-started-with-binomial-generalized-linear-mixed-models/
   
-
+model assumptions
+chrome-extension://nlaealbpbmpioeidemdfedkfmglobidl/https://www.st-andrews.ac.uk/media/ceed/students/mathssupport/mixedeffectsknir.pdf
 
 # individual, sex, year as random effects (how to account for multiple random effects?)
 
