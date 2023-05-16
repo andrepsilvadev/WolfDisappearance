@@ -95,30 +95,36 @@ ggsave("output/IllegalAndLegalRecordsPerMunicipality.png",
 norway <- sf::st_read("data/spatialData/gadm36_NOR_2.shp")
 sweden <- sf::st_read("data/spatialData/gadm36_SWE_2.shp")
 scandinavia <- rbind(norway, sweden) %>%
-  select(NAME_2,geometry)
+  dplyr::select(NAME_2,geometry)
 reindeerhusbandry <- sf::st_read("data/spatialData/TamreinNoSv.shp") #%>% #UTM33
   #st_transform(crs = st_crs(scandinavia))
 
-subsetSpatial <- st_as_sf(x = cleandata,
+cleandataTemp <- cleandata
+cleandataTemp$Fate <- recode(cleandataTemp$Fate,
+                             illegal = "Disappearance",
+                             legal = "Legallly harvested")
+
+subsetSpatial <- st_as_sf(x = cleandataTemp,
                           coords = c("X_coordinate_fatefile","Y_coordinate_fatefile"),
                           crs = "EPSG:3021") %>% #RT90
   st_transform(crs = st_crs(scandinavia)) %>%
-  filter(Fate %in% c("illegal","legal")) # having problems plotting all categories R cloud
+  filter(Fate %in% c("Disappearance","Legallly harvested")) # having problems plotting all categories R cloud
 
 p5 <- ggplot() +
       geom_sf(data = scandinavia) +
-      geom_sf(data = reindeerhusbandry,
-          aes(fill="Reindeer husbandry area",alpha = 0.05)) +
+      #geom_sf(data = reindeerhusbandry,
+      #    aes(fill="Reindeer husbandry area",alpha = 0.05)) +
       geom_sf(data = subsetSpatial, aes(color = Fate),size = 0.7) +
       coord_sf(xlim = c(3, 23), ylim = c(57, 64), expand = FALSE) +
-      #facet_wrap(~Fate) +
+      facet_wrap(~Fate) +
       viridis::scale_fill_viridis(discrete=TRUE) +
-      ggtitle(label = "Wolf fate (1998-2020)") + 
+      #ggtitle(label = "Wolf fate (1998-2020)") + 
       geom_text(size = 30) +
       theme_minimal()
 p5
-ggsave("output/WolfFateSpatialDistribution.png",
-       p5, width = 14, height = 10, dpi = 600, bg = "white")
+ggsave("output/WolfFateSpatialDistributionFacetWrap.png",
+       p5, width = 14, height = 10, dpi = 1000, bg = "white")
+
 
 
 #####
