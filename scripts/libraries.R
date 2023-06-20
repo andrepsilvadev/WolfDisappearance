@@ -1,6 +1,6 @@
 library(easypackages)
-easypackages::packages("credentials","tidyverse","reshape2", "gridExtra",
-                       "sf", 
+easypackages::packages("credentials","tidyverse","reshape2", "slider", "gridExtra",
+                       "sf", "viridis",
                        "lme4", "DHARMa", "performance", "AICcmodavg")
   
 #Current token

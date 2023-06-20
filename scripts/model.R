@@ -1,42 +1,18 @@
-# Generalized Linear Mixed-Effect Model (GLMM) ##
+## Generalized Linear Mixed-Effect Model (GLMM) ##
 ## Andre P. Silva ##
 
-## libraries -------------------------------------------------------------------
-source("scripts/libraries.R")
-source("scripts/readData.R")
+# data -------------------------------------------------------------------------
+modeldatascaled <- read_csv('./data/modelInputData/df.municipality_year_scaled.csv')
 
-# data ------------------------------------------------------------------
-modeldata <- cleandata %>%
-  ungroup() %>% 
-  filter(Fate %in% c("illegal","legal")) %>%
-  select("Fate", "SLU-ID", "Spring", "ruggedness_mean","pop_mean", "Fi",
-         "hunt_county", "number_neighbour_terr") %>%
-  rename(fate = Fate,
-         id = `SLU-ID`,
-         Spring = Spring,
-         terrRug = ruggedness_mean,
-         humPop = pop_mean,
-         fi = Fi,
-         mooseHunt = hunt_county,
-         wolfNeighbour =  number_neighbour_terr) %>%
-  mutate(fate = as.factor(recode(fate, 'illegal'='1', 'legal'='0')))
-head(modeldata)
-
-# scaled data  
-modeldatascaled <- modeldata %>% 
-  mutate_at(c("terrRug", "humPop", "fi", "mooseHunt", "wolfNeighbour"),
-            ~(scale(.) %>% as.vector)) %>%
-  mutate(humPop2 = humPop^2)
-head(modeldatascaled)
-
+# First-stage of analyses--------------------------------------------------------
 # list of candidate models
 Cand.mod <- list()
 # Poaching by retaliation and socio-economic context
-Cand.mod[[1]] <- glmer(fate ~  sheepAttacks + killedWolves + IncAvg1998_2021 + (1 |Spring), data = modeldatascaled, family = binomial)
+Cand.mod[[1]] <- glmer(fate ~  AttackDogs_n + wolfLKill_n + IndividualIncome + (1 |Spring), data = modeldatascaled, family = binomial)
 # poaching by retaliation and easiness of access
-Cand.mod[[2]] <- glmer(fate ~ sheepAttacks + terrRug + humPop +  (1 | Spring), data = modeldatascaled, family = binomial)
+Cand.mod[[2]] <- glmer(fate ~ AttackDogs_n + terrRug + humPop +  (1 | Spring), data = modeldatascaled, family = binomial)
 # global model
-Cand.mod[[3]] <- glmer(fate ~ sheepAttacks + killedWolves + IncAvg1998_2021 + terrRug + humPop + (1 | Spring), data = modeldatascaled, family = binomial)
+Cand.mod[[3]] <- glmer(fate ~ AttackDogs_n + wolfLKill_n + IndividualIncome + terrRug + humPop +  (1 | Spring), data = modeldatascaled, family = binomial)
 # null model
 Cand.mod[[4]] <- glmer(fate ~ 1 + (1 | Spring), data = modeldatascaled, family = binomial)
 
@@ -47,21 +23,29 @@ Modnames <- c("Poaching + socioeconomic",
 
 #Model selection table based on AIC
 aictab(cand.set = Cand.mod, modnames = Modnames)
+summary(Cand.mod[[1]])
+r2_nakagawa(Cand.mod[[3]])
+confint.merMod(Cand.mod[[1]], method = c("Wald"))
+
+
+# second-stage of analyses -----------------------------------------------------
+# takes the variables with well supported effects from the best model in the
+# first stage of analyses and combines them with additional hypotheses (i.e.
+# inbreeding and competition variables)
 
 # list of candidate models
 Cand.mod2 <- list()
 # Poaching by retaliation and socio-economic context
-Cand.mod2[[1]] <- glmer(fate ~  sheepAttacks + killedWolves + (1 |Spring), data = modeldatascaled, family = binomial)
-# best of poaching + inbreeding
-Cand.mod2[[2]] <- glmer(fate ~ sheepAttacks + killedWolves + fi + (1 | Spring), data = modeldatascaled, family = binomial)
-# best of poaching + competition
-Cand.mod2[[3]] <- glmer(fate ~ sheepAttacks + killedWolves + wolfNeighbour + bearDensity + (1 | Spring), data = modeldatascaled, family = binomial)
+Cand.mod2[[1]] <- glmer(fate ~ AttackDogs_n + wolfLKill_n  (1 |Spring), data = modeldatascaled, family = binomial)
+# best of poaching + socio-economic context + inbreeding
+Cand.mod2[[2]] <- glmer(fate ~ AttackDogs_n + killedWolves + fi + (1 | Spring), data = modeldatascaled, family = binomial)
+# best of poaching + socio-economic context + competition
+Cand.mod2[[3]] <- glmer(fate ~ AttackDogs_n + killedWolves + wolfNeighbour + bearDensity + (1 | Spring), data = modeldatascaled, family = binomial)
 # global model
-Cand.mod2[[4]] <- glmer(fate ~ sheepAttacks + killedWolves + fi + wolfNeighbour + (1 | Spring), data = modeldatascaled, family = binomial)
+Cand.mod2[[4]] <- glmer(fate ~ AttackDogs_n + killedWolves + fi + wolfNeighbour + bearDensity + (1 | Spring), data = modeldatascaled, family = binomial)
 # null model
 Cand.mod2[[5]] <- glmer(fate ~ 1 + (1 | Spring), data = modeldatascaled, family = binomial)
 
-# I have removed mooseHunt so far I dont understand the rationale
 #Assign names to each model
 Modnames2 <- c("Poaching + socioeconomic",
               "Poaching + Inbreeding",
@@ -81,7 +65,7 @@ confset(cand.set = Cand.mod, modnames = Modnames, second.ord = TRUE,
 
 #MODEL FIT
 #r2_nakagawa() - marginal and conditional r-squared value for mixed effects models with complex random effects structures
-library(performance)
+
 r2_nakagawa(Cand.mod[[1]])
 
 #confint.merMod(Cand.mod[[1]], method = c("boot"))
