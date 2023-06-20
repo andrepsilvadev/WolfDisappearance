@@ -26,7 +26,8 @@ cleandata <- data %>%
   mutate(Fate = str_replace(Fate, "censor", "censored")) %>%
   mutate(Fate = str_replace(Fate, "cernsored", "censored")) %>%
   mutate(Fate = str_replace(Fate, "censoreded", "censored")) %>%
-  mutate(KommunerNamn = tolower(KommunerNamn))
+  mutate(KommunerNamn = tolower(KommunerNamn)) %>%
+  ungroup()
 
 # calculate average and maximum inbreeding per territory -----------------------
 fi.df <- cleandata %>%
@@ -50,7 +51,8 @@ why is the coorrelation betwen Fi and max fi =1?
 
 #inbreeding needs to be changed for average inbreeding
 
-years <- seq(1999,2020,1) # keep location only for previous year before last year monitoring to be sure we are working with pairs that are alive
+years <- seq(1999,2020,1) # keep location only for previous year before last 
+# year monitoring to be sure we are working with pairs that are alive
 
 allyeardata <- list()
 counts <- list()
