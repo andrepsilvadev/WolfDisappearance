@@ -74,6 +74,12 @@ several options
  # therefore decided to keep only the number of attacks for the dog variable 
  # double check if dog data includes norway, looking at data joins it does not seem so a lot of NAs for Norwegian kommunes 
 
+# calculate average and maximum inbreeding per territory -----------------------
+cleandata <- cleandata %>%
+  group_by(territory) %>%
+  mutate(mean_fi = mean(Fi),
+         max_fi = max(Fi))
+
 # spatial data -----------------------------------------------------------------
 norway <- sf::st_read("data/spatialData/gadm36_NOR_shp/gadm36_NOR_2.shp")
 sweden <- sf::st_read("data/spatialData/gadm36_SWE_shp/gadm36_SWE_2.shp")
