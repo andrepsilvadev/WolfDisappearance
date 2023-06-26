@@ -1,15 +1,13 @@
 ## Model input data ##
 ## Andre P. Silva ##
 
-to delete later
-#Notes: save previosu file (github version to see legal vs illegal before modifications
-#### to delete later
-why is the coorrelation betwen Fi and max fi =1?
-  cor(dataToModel$Fi,dataToModel$max_fi, use="complete.obs")
-
-in the new data there seems to not exist a colum "x" at the end as in the
-previous dats - not sure if has ny impact
-
+# Notes:
+# save previous file/code (github version to replicate legal vs illegal before modifications
+# why is the correlation betwen Fi and max fi not =1?
+# since I select the territory by mean Fi it is expected that I do not have
+# a correlation of 1 with the Fi of the individual it was selected still 0.6
+# seems a bit low - indication of wide variation in the data?
+  
 # raw data ---------------------------------------------------------------------
 data <- readr::read_csv2("data/rawData/FateWolvesTerritory1998_2020_Scandinavia_Final_CDB.csv",
                          locale = locale(encoding = "ISO-8859-1"))
@@ -48,17 +46,16 @@ length(unique(dataToModel7$territory)) # 435 all territories
 nrow(dataToModel7) # 1920 all territories
 unique(dataToModel7$Fate)
 
-
-# select disappearances and ongoing territories ---------------------------------
 # territory selection ----------------------------------------------------------
 territoriesToModel <- dataToModel7 %>%
+  mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
   group_by(territory) %>%
   # only keep territories that have "NA","illegal" or,"censored" in their fate
   # by excluding other fates
   filter(!any(Fate %in% c("other","legal","natural","traffic"))) %>% # i get 291
   # keep the row with the maximum inbreeding, if tied keep the first row
-  #group_by(territory, Autumn) %>%
-  #slice_max(mean_fi, with_ties=FALSE) %>% 
+  group_by(territory, Autumn) %>%
+  slice_max(mean_fi, with_ties=FALSE) %>% 
   # add column to double-check potential duplicate rows within territories 
   #mutate(Autumn_dup = duplicated(Autumn)) %>%
   arrange(territory, Autumn)
@@ -67,14 +64,12 @@ length(unique(territoriesToModel$territory)) # 291
 nrow(territoriesToModel) # 642 only one individual per territory
 unique(territoriesToModel$Fate)
 table(territoriesToModel$Autumn_dup)
-
+sum(territoriesToModel$Fate_binary==0) # 449
+sum(territoriesToModel$Fate_binary==1) # 193
 
 double check this approach with several territories I thinkt it might be doing the trick
 
-unique(modeldata$Fate)
-
 # count disappearances and ongoing territories per year ------------------------
-
 df <- territoriesToModel %>% 
   group_by(Spring) %>%
   summarise(
@@ -85,6 +80,8 @@ df <- territoriesToModel %>%
     n()
   )
 
+sum(df$disappearance) # 193 # double checking
+sum(df$ongoing) # 449 # double checking
 print(df, n=30)
 
 # plot disappearance rate - it does not match the plot from Liberg et al. 2020
@@ -161,83 +158,44 @@ p2_sub
 
 # currently highest correlation among selected variables is 0.51
 
-
-
-
 # model data scaled ------------------------------------------------------------
 modeldatascaled <- territoriesToModel %>% 
   mutate(ruggedness_mean_sc = scale(ruggedness_mean),
-         average_gravel_km_sc = scale(average_gravel_km)
-         average_paved_km_sc = scale(average_paved_km)      
-         artificial_area_total_sc = scale(artificial_area_total)
-         pop_mean_sc = scale(pop_mean)              
-         mean_snow_sc = scale(mean_snow)
-         hunt_afo_sc = scale(hunt_afo)             
-         hunt_county2_sc = scale(hunt_county2)
-         number_neighbour_terr_sc = scale(number_neighbour_terr)
-         bear_density_BZtiff_sc = scale(bear_density_BZtiff)
-         Fi_sc = scale(Fi)
-         mean_fi_sc = scale(mean_fi)
-         max_fi_sc = scale(max_fi)                
-         wolfLKill_cumall_sc = scale(wolfLKill_cumall)
-         wolfLKill_last5y_sc = scale(wolfLKill_last5y)      
-         wolfLKill_n_sc = scale(wolfLKill_n)
-         NoAffectedSheep_cumall_sc = scale(NoAffectedSheep_cumall)
-         NoAffectedSheep_last5y_sc = scale(NoAffectedSheep_last5y)
-         NoAffectedSheep_sc = scale(NoAffectedSheep)       
-         sheepAttacks_n_sc = scale(sheepAttacks_n)
-         AttackDogs_cumall_sc = scale(AttackDogs_cumall)     
-         AttackDogs_last5y_sc = scale(AttackDogs_last5y)
-         AttackDogs_n_sc = scale(AttackDogs_n)          
-         IndividualIncome_sc = scale(IndividualIncome)
+         average_gravel_km_sc = scale(average_gravel_km),
+         average_paved_km_sc = scale(average_paved_km),      
+         artificial_area_total_sc = scale(artificial_area_total),
+         pop_mean_sc = scale(pop_mean),              
+         mean_snow_sc = scale(mean_snow),
+         hunt_afo_sc = scale(hunt_afo),             
+         hunt_county2_sc = scale(hunt_county2),
+         # number_neighbour_terr_sc = scale(number_neighbour_terr), # count data - not scaled 
+         bear_density_BZtiff_sc = scale(bear_density_BZtiff),
+         Fi_sc = scale(Fi),
+         mean_fi_sc = scale(mean_fi),
+         max_fi_sc = scale(max_fi),                
+         # wolfLKill_cumall_sc = scale(wolfLKill_cumall), # count data - not scaled 
+         # wolfLKill_last5y_sc = scale(wolfLKill_last5y), # count data - not scaled     
+         # wolfLKill_n_sc = scale(wolfLKill_n), # count data - not scaled 
+         # NoAffectedSheep_cumall_sc = scale(NoAffectedSheep_cumall), # count data - not scaled 
+         # NoAffectedSheep_last5y_sc = scale(NoAffectedSheep_last5y), # count data - not scaled 
+         # NoAffectedSheep_sc = scale(NoAffectedSheep), # count data - not scaled       
+         # sheepAttacks_n_sc = scale(sheepAttacks_n), # count data - not scaled 
+         # AttackDogs_cumall_sc = scale(AttackDogs_cumall), # count data - not scaled      
+         # AttackDogs_last5y_sc = scale(AttackDogs_last5y), # count data - not scaled 
+         # AttackDogs_n_sc = scale(AttackDogs_n), # count data - not scaled         
+         IndividualIncome_sc = scale(IndividualIncome),
          income_prop_sc = scale(income_prop))
-    
-    
-    
-    
-    "terrRug", "humPop",
-              "fi","mean_fi", "max_fi",
-              "mooseHunt", "wolfNeighbour",
-              "AttackDogs_n",
-              "wolfLKill_n", "wolfLKill_last5y","wolfLKill_cumall",
-              "sheepAttacks_n","NoAffectedSheep","NoAffectedSheep_last5y",
-              "NoAffectedSheep_cumall",
-              "IndividualIncome",
-              "bearDensity"),
-            ~(scale(.) %>% as.vector))
 
-# summarise per territory illegal (disappearance) vs ongoing -------------------
-modeldatascaled <- modeldata %>% 
-  mutate_at(c("terrRug", "humPop",
-              "fi","mean_fi", "max_fi",
-              "mooseHunt", "wolfNeighbour",
-              "AttackDogs_n",
-              "wolfLKill_n", "wolfLKill_last5y","wolfLKill_cumall",
-              "sheepAttacks_n","NoAffectedSheep","NoAffectedSheep_last5y",
-              "NoAffectedSheep_cumall",
-              "IndividualIncome",
-              "bearDensity"),
-            ~(scale(.) %>% as.vector))
+# territory data
+write.csv(modeldatascaled,'data/modelInputData/df.territoryLevel.csv',
+          row.names = F)
 
-# scale data  
-modeldatascaled <- modeldata %>% 
-  mutate_at(c("terrRug", "humPop",
-              "fi","mean_fi", "max_fi",
-              "mooseHunt", "wolfNeighbour",
-              "AttackDogs_n",
-              "wolfLKill_n", "wolfLKill_last5y","wolfLKill_cumall",
-              "sheepAttacks_n","NoAffectedSheep","NoAffectedSheep_last5y",
-              "NoAffectedSheep_cumall",
-              "IndividualIncome",
-              "bearDensity"),
-            ~(scale(.) %>% as.vector))
-head(modeldatascaled)
-
-write.csv(modeldatascaled,'data/modelInputData/survivalAnalysis_testdata.csv',
+# save data for survival analyses test
+write.csv(modeldatascaled,'data/modelInputData/survivalAnalysis_testdata2.csv',
           row.names = F)
 
 # summarise territory data per year --------------------------------------------
-df.year <- - dataToModel6 %>%
+df.year <- territoriesToModel %>%
   mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
   mutate(year = Autumn,.before=mod_id) %>%
   group_by(year) %>%
