@@ -75,23 +75,30 @@ several options
  # double check if dog data includes norway, looking at data joins it does not seem so a lot of NAs for Norwegian kommunes 
 
 # calculate average and maximum inbreeding per territory -----------------------
-cleandata_withFi <- cleandata %>%
+cleandata_withFi <- 
+  cleandata %>%
   group_by(territory) %>%
   mutate(mean_fi = mean(Fi),
          max_fi = max(Fi))
 
 # spatial data -----------------------------------------------------------------
-norway <- sf::st_read("data/spatialData/gadm36_NOR_shp/gadm36_NOR_2.shp")
-sweden <- sf::st_read("data/spatialData/gadm36_SWE_shp/gadm36_SWE_2.shp")
-scandinavia <- rbind(norway, sweden) %>% 
-  select(NAME_1,NAME_2,geometry)
+norway <-
+  sf::st_read("data/spatialData/gadm36_NOR_shp/gadm36_NOR_2.shp")
+sweden <-
+  sf::st_read("data/spatialData/gadm36_SWE_shp/gadm36_SWE_2.shp")
+scandinavia <- rbind(norway, sweden) %>%
+  select(NAME_1, NAME_2, geometry)
 
 # add municipality (gadm classification) ---------------------------------------
 # convert to spatial data and add gadm names
-dataToModel1 <- st_as_sf(x = cleandata_withFi, #convert to spatial features (sf)
-                         coords = c("X_coordinate_fatefile",
-                                    "Y_coordinate_fatefile"),
-                                crs = "EPSG:3021") %>% #RT90
+dataToModel1 <-
+  st_as_sf(
+    x = cleandata_withFi,
+    #convert to spatial features (sf)
+    coords = c("X_coordinate_fatefile",
+               "Y_coordinate_fatefile"),
+    crs = "EPSG:3021"
+  ) %>% #RT90
   st_transform(crs = st_crs(scandinavia)) %>%
   st_intersection(scandinavia) %>% # add gadm names for municipalities
   st_drop_geometry() # back to data frame
@@ -332,32 +339,67 @@ kommunesWithWrongCountry <- c("Aurskog-Høland","Enebakk","Aremark","Dals-Ed",
                               "Halden","Rømskog","Åsnes","Eidskog","Grue",
                               "Kongsvinger","Trysil","Våler")  
 
-dataToModel4 <-  dataToModel4 %>% 
-  mutate(Country_fatefile = ifelse(NAME_2 %in% kommunesWithWrongCountry, str_replace(Country_fatefile, "S", "N"), Country_fatefile))
+dataToModel4 <-
+  dataToModel4 %>%
+  mutate(
+    Country_fatefile = ifelse(
+      NAME_2 %in% kommunesWithWrongCountry,
+      str_replace(Country_fatefile, "S", "N"),
+      Country_fatefile
+    )
+  )
 
-dataToModel5 <- left_join(dataToModel4,
-                          individualIncomeData,
-                          by=c('NAME_2'='Kommun','Autumn'='Year'))
+dataToModel5 <-
+  left_join(
+    dataToModel4,
+    individualIncomeData,
+    by = c('NAME_2' = 'Kommun', 'Autumn' = 'Year')
+    )
 
 # add years since first detection for test with survival analyses --------------
-dataToModel6 <- dataToModel5 %>% 
+dataToModel6 <- 
+  dataToModel5 %>%
   group_by(territory) %>%
-  mutate(first_yeardet = min(Autumn),
-         last_yeardet = max(Autumn),
-         years_firstdet = Autumn-first_yeardet,
-         time_start = Autumn-first_yeardet,
-         time_end = Spring-first_yeardet) 
+  mutate(
+    first_yeardet = min(Autumn),
+    last_yeardet = max(Autumn),
+    years_firstdet = Autumn - first_yeardet,
+    time_start = Autumn - first_yeardet,
+    time_end = Spring - first_yeardet
+  ) 
 
-# prepare for correlation analyses ---------------------------------------------
-dataToModel7 <- dataToModel6 %>%
-  relocate(c(NAME_1,NAME_2), .after=Comment) %>%
-  select(-c(geometry.x,geometry.y)) %>%
-  relocate(geometry, .after=Comment) %>%
-  relocate(income_prop, .after=IndividualIncome)
-  #mutate_at(c("wolfLKill_cumall", "wolfLKill_n", "sheepAttacks_n",
-  #            "AttackDogs_cumall", "AttackDogs_n"),
-  #          ~as.numeric(.))
+# add population size ----------------------------------------------------------
+# note: in this way legally removed territories in one year or territories that
+# disappeared due to natural causes are still considered in the census of that
+# spring. The same for other causes of death 
+wolfPopSize <-
+  dataToModel6 %>%
+  group_by(Spring) %>%
+  summarise(
+    Spring = unique(Spring),
+    # number of unique territories per year, independently of their fate
+    wolfPopSize = length(unique(territory))
+  )
+
+dataToModel7 <-
+  left_join(
+    dataToModel6,
+    wolfPopSize,
+    by = c('Spring' = 'Spring')
+  )
   
+# prepare for correlation analyses ---------------------------------------------
+dataToModel8 <- 
+  dataToModel7 %>%
+  relocate(c(NAME_1, NAME_2), .after = Comment) %>%
+  select(-c(geometry.x, geometry.y)) %>%
+  relocate(geometry, .after = Comment) %>%
+  relocate(income_prop, .after = IndividualIncome) %>%
+  relocate(wolfPopSize, .after = income_prop)
+#mutate_at(c("wolfLKill_cumall", "wolfLKill_n", "sheepAttacks_n",
+#            "AttackDogs_cumall", "AttackDogs_n"),
+#          ~as.numeric(.))
+
 
 
 

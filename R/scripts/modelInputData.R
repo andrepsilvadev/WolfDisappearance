@@ -42,32 +42,32 @@ cleandata <- data %>%
 
 # add new explanatory variables ------------------------------------------------
 source("scripts/AdditionalExplanatoryData.R")
-length(unique(dataToModel7$territory)) # 435 all territories
-nrow(dataToModel7) # 1920 all territories
-unique(dataToModel7$Fate)
+length(unique(dataToModel8$territory)) # 435 all territories
+nrow(dataToModel8) # 1920 all territories
+unique(dataToModel8$Fate)
 
 # territory selection ----------------------------------------------------------
-territoriesToModel <- dataToModel7 %>%
-  mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
+# Note: function tested by Cecilia and Giorgia
+# territorySelection_testFunctionsCeciliaGiorgia.R
+# inconsistencies detected for instance when there is combination of fates such
+# as "illegal", "other" - 6 territories and "illegal", "legal" - 12 territories 
+territoriesToModel <- dataToModel8 %>%
   group_by(territory) %>%
   # only keep territories that have "NA","illegal" or,"censored" in their fate
   # by excluding other fates
-  filter(!any(Fate %in% c("other","legal","natural","traffic"))) %>% # i get 291
+  filter(!any(Fate %in% c("other","legal","natural","traffic"))) %>% # 291
   # keep the row with the maximum inbreeding, if tied keep the first row
   group_by(territory, Autumn) %>%
   slice_max(mean_fi, with_ties=FALSE) %>% 
   # add column to double-check potential duplicate rows within territories 
   #mutate(Autumn_dup = duplicated(Autumn)) %>%
+  ungroup() %>%
+  mutate(Fate_binary = ifelse(is.na(Fate), 0,1),.after=Fate) %>%
   arrange(territory, Autumn)
 
 length(unique(territoriesToModel$territory)) # 291
 nrow(territoriesToModel) # 642 only one individual per territory
 unique(territoriesToModel$Fate)
-table(territoriesToModel$Autumn_dup)
-sum(territoriesToModel$Fate_binary==0) # 449
-sum(territoriesToModel$Fate_binary==1) # 193
-
-double check this approach with several territories I thinkt it might be doing the trick
 
 # count disappearances and ongoing territories per year ------------------------
 df <- territoriesToModel %>% 
@@ -93,12 +93,16 @@ ggplot(data=df, aes(x=Spring, y=prop_disappearance, group=1)) +
   geom_line()+
   geom_point()
 
-
 # covariate correlation --------------------------------------------------------
 colnames(territoriesToModel) # output AdditionalExplanatoryData.R
 
-cormat <- round(cor(dataToModel7[18:42], use = "complete.obs",
-                    method = "spearman"),2)
+cormat <- round(
+  cor(
+    territoriesToModel[19:44],
+    use = "pairwise.complete.obs",
+    method = "spearman"),
+  2)
+
 cormat
 upper_tri <- get_upper_tri(cormat)
 melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
@@ -116,7 +120,7 @@ p2
 
 highlyCorrelatedVars <- melted_cormat %>%
   filter(value >0.5 | value < -0.5)
-highlyCorrelatedVars
+#highlyCorrelatedVars
 
 # variables to exclude
 VarsToExclude <- c("ruggedness_mean",
@@ -140,8 +144,13 @@ VarsToExclude <- c("ruggedness_mean",
 data_withoutCorrVars <- territoriesToModel %>%
   select(-VarsToExclude)
 
-sub_cormat <- round(cor(data_withoutCorrVars[18:26], use = "complete.obs",
-                    method = "spearman"),2)
+sub_cormat <- round(
+  cor(
+    data_withoutCorrVars[19:28],
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+  )
+
 upper_tri <- get_upper_tri(sub_cormat)
 sub_melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)         
 
@@ -159,184 +168,203 @@ p2_sub
 # currently highest correlation among selected variables is 0.51
 
 # model data scaled ------------------------------------------------------------
-modeldatascaled <- territoriesToModel %>% 
-  mutate(ruggedness_mean_sc = scale(ruggedness_mean),
-         average_gravel_km_sc = scale(average_gravel_km),
-         average_paved_km_sc = scale(average_paved_km),      
-         artificial_area_total_sc = scale(artificial_area_total),
-         pop_mean_sc = scale(pop_mean),              
-         mean_snow_sc = scale(mean_snow),
-         hunt_afo_sc = scale(hunt_afo),             
-         hunt_county2_sc = scale(hunt_county2),
-         # number_neighbour_terr_sc = scale(number_neighbour_terr), # count data - not scaled 
-         bear_density_BZtiff_sc = scale(bear_density_BZtiff),
-         Fi_sc = scale(Fi),
-         mean_fi_sc = scale(mean_fi),
-         max_fi_sc = scale(max_fi),                
-         # wolfLKill_cumall_sc = scale(wolfLKill_cumall), # count data - not scaled 
-         # wolfLKill_last5y_sc = scale(wolfLKill_last5y), # count data - not scaled     
-         # wolfLKill_n_sc = scale(wolfLKill_n), # count data - not scaled 
-         # NoAffectedSheep_cumall_sc = scale(NoAffectedSheep_cumall), # count data - not scaled 
-         # NoAffectedSheep_last5y_sc = scale(NoAffectedSheep_last5y), # count data - not scaled 
-         # NoAffectedSheep_sc = scale(NoAffectedSheep), # count data - not scaled       
-         # sheepAttacks_n_sc = scale(sheepAttacks_n), # count data - not scaled 
-         # AttackDogs_cumall_sc = scale(AttackDogs_cumall), # count data - not scaled      
-         # AttackDogs_last5y_sc = scale(AttackDogs_last5y), # count data - not scaled 
-         # AttackDogs_n_sc = scale(AttackDogs_n), # count data - not scaled         
-         IndividualIncome_sc = scale(IndividualIncome),
-         income_prop_sc = scale(income_prop))
+# for some reason scale with dplyr and mutate was producing nan
+# count data not scaled
+modeldatascaled <- territoriesToModel
+modeldatascaled$ruggedness_mean_sc <- scale(modeldatascaled$ruggedness_mean)[,1] 
+modeldatascaled$average_gravel_km_sc <- scale(modeldatascaled$average_gravel_km)[,1] 
+modeldatascaled$average_paved_km_sc <- scale(modeldatascaled$average_paved_km)[,1]       
+modeldatascaled$artificial_area_total_sc <- scale(modeldatascaled$artificial_area_total)[,1] 
+modeldatascaled$pop_mean_sc <- scale(modeldatascaled$pop_mean)[,1]               
+modeldatascaled$mean_snow_sc <- scale(modeldatascaled$mean_snow)[,1] 
+modeldatascaled$hunt_afo_sc <- scale(modeldatascaled$hunt_afo)[,1]              
+modeldatascaled$hunt_county2_sc <- scale(modeldatascaled$hunt_county2)[,1] 
+# modeldatascaled$number_neighbour_terr_sc <- scale(modeldatascaled$number_neighbour_terr)[,1]  # count data - not scaled 
+modeldatascaled$bear_density_BZtiff_sc <- scale(modeldatascaled$bear_density_BZtiff)[,1] 
+modeldatascaled$Fi_sc <- scale(modeldatascaled$Fi)[,1] 
+modeldatascaled$mean_fi_sc <- scale(modeldatascaled$mean_fi)[,1] 
+modeldatascaled$max_fi_sc <- scale(modeldatascaled$max_fi)[,1]               
+# modeldatascaled$wolfLKill_cumall_sc <- scale(modeldatascaled$wolfLKill_cumall)[,1]  # count data - not scaled 
+# modeldatascaled$wolfLKill_last5y_sc <- scale(modeldatascaled$wolfLKill_last5y)[,1]  # count data - not scaled     
+# modeldatascaled$wolfLKill_n_sc <- scale(modeldatascaled$wolfLKill_n)[,1]  # count data - not scaled 
+# modeldatascaled$NoAffectedSheep_cumall_sc <- scale(modeldatascaled$NoAffectedSheep_cumall)[,1]  # count data - not scaled 
+# modeldatascaled$NoAffectedSheep_last5y_sc <- scale(modeldatascaled$NoAffectedSheep_last5y)[,1]  # count data - not scaled 
+# modeldatascaled$NoAffectedSheep_sc <- scale(modeldatascaled$NoAffectedSheep)[,1]  # count data - not scaled       
+# modeldatascaled$sheepAttacks_n_sc <- scale(modeldatascaled$sheepAttacks_n)[,1]  # count data - not scaled 
+# modeldatascaled$AttackDogs_cumall_sc <- scale(modeldatascaled$AttackDogs_cumall)[,1]  # count data - not scaled      
+# modeldatascaled$AttackDogs_last5y_sc <- scale(modeldatascaled$AttackDogs_last5y)[,1]  # count data - not scaled 
+# modeldatascaled$AttackDogs_n_sc <- scale(modeldatascaled$AttackDogs_n)[,1]  # count data - not scaled         
+modeldatascaled$IndividualIncome_sc <- scale(modeldatascaled$IndividualIncome)[,1] 
+modeldatascaled$income_prop_sc <- scale(modeldatascaled$income_prop)[,1]
+# modeldatascaled$wolfPopSize <- scale(modeldatascaled$wolfPopSize)[,1]  # count data - not scaled         
+modeldatascaled <- as_tibble(modeldatascaled)
 
 # territory data
-write.csv(modeldatascaled,'data/modelInputData/df.territoryLevel.csv',
-          row.names = F)
-
-# save data for survival analyses test
-write.csv(modeldatascaled,'data/modelInputData/survivalAnalysis_testdata2.csv',
-          row.names = F)
+write_csv2(modeldatascaled,'data/modelInputData/df.territory.csv')
 
 # summarise territory data per year --------------------------------------------
-df.year <- territoriesToModel %>%
-  mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
-  mutate(year = Autumn,.before=mod_id) %>%
+
+# adopted from territory selection but includes all fates to calculate pop.size
+yearlyTerritoryStats <- dataToModel8 %>%
+  group_by(territory, Spring) %>%
+  slice_max(mean_fi, with_ties=FALSE) %>%
+  ungroup() %>%
+  arrange(territory, Spring) %>%
+  mutate(year = Spring,.before=mod_id) %>%
   group_by(year) %>%
-  summarise(sum_fate = sum(Fate_binary),
-            n_territories = n(),
-            prop_disappearance = sum_fate/n_territories,
-            mean_ruggedness = mean(ruggedness_mean),      
-            average_gravel_km = mean(average_gravel_km),
-            average_paved_km = mean(average_paved_km),
-            pop_mean = mean(pop_mean),            
-            mean_snow = mean(mean_snow),
-            mean_artificial_area_total = mean(artificial_area_total),
-            hunt_county2 = mean(hunt_county2),
-            mean_fi = mean(Fi), 
-            mean_maxfi = mean(max_fi),
-            mean_number_neighbour_terr = mean(number_neighbour_terr),
-            mean_bear_density_BZtiff = mean(bear_density_BZtiff),
-            sum_wolfLKill_n = sum(wolfLKill_n),
-            sum_wolfLKill_last5y = sum(wolfLKill_last5y),
-            sum_sheepAttacks_n = sum(sheepAttacks_n),
-            sum_NoAffectedSheep_last5y = sum(NoAffectedSheep_last5y),
-            sum_AttackDogs_n = sum(AttackDogs_n),
-            sum_AttackDogs_last5y = sum(AttackDogs_last5y),
-            mean_IndividualIncome = mean(IndividualIncome)) 
+  summarise(disappearance = sum(Fate == "illegal", na.rm=TRUE),
+            n_territories_without_disap = n()-disappearance,
+            n_territories = n_territories_without_disap+disappearance,
+            prop_disappearance = disappearance/n_territories)
 
-# scale data  
-VarsToScale <- c("pop_mean",
-                 "hunt_county2", 
-                 "mean_fi",
-                 "mean_bear_density_BZtiff",
-                 "wolfLKill_n",
-                 "sheepAttacks_n",
-                 "AttackDogs_n")
+head(yearlyTerritoryStats, n=30)
 
-df.year_scaled <- df.year %>%
-  mutate_at(VarsToScale,
-            ~(scale(.) %>% as.vector))
+ggplot(data=yearlyTerritoryStats, aes(x=year, y=prop_disappearance, group=1)) +
+  geom_line()+
+  geom_point()
 
-write.csv(df.year_scaled,
-          'data/modelInputData/df.year_scaled.csv', row.names = F)
+ggplot(data=yearlyTerritoryStats, aes(x=year, y= n_territories_without_disap, group=1)) +
+  geom_line()+
+  geom_point()
+
+it still does not extactly match the plot form liberg et al 2020
+
+yearlyTerritoryFeatures <- territoriesToModel %>%
+  mutate(year = Spring,.before=mod_id) %>%
+  filter(Fate_binary == 1) %>% # filter only disappearances
+  group_by(year) %>%
+  summarise(mean_ruggedness = mean(ruggedness_mean, na.rm = TRUE),      
+            average_gravel_km = mean(average_gravel_km, na.rm = TRUE),
+            average_paved_km = mean(average_paved_km, na.rm = TRUE),
+            pop_mean = mean(pop_mean, na.rm = TRUE),            
+            mean_snow = mean(mean_snow, na.rm = TRUE),
+            mean_artificial_area_total = mean(artificial_area_total, na.rm = TRUE),
+            hunt_county2 = mean(hunt_county2, na.rm = TRUE),
+            mean_fi = mean(mean_fi, na.rm = TRUE), 
+            mean_maxfi = mean(max_fi, na.rm = TRUE),
+            mean_number_neighbour_terr = mean(number_neighbour_terr, na.rm = TRUE),
+            mean_bear_density_BZtiff = mean(bear_density_BZtiff, na.rm = TRUE),
+            sum_wolfLKill_n = sum(wolfLKill_n, na.rm = TRUE),
+            sum_wolfLKill_last5y = sum(wolfLKill_last5y, na.rm = TRUE),
+            sum_sheepAttacks_n = sum(sheepAttacks_n, na.rm = TRUE),
+            sum_NoAffectedSheep_last5y = sum(NoAffectedSheep_last5y, na.rm = TRUE),
+            sum_AttackDogs_n = sum(AttackDogs_n, na.rm = TRUE),
+            sum_AttackDogs_last5y = sum(AttackDogs_last5y, na.rm = TRUE),
+            mean_IndividualIncome = mean(IndividualIncome, na.rm = TRUE),
+            mean_income_prop = mean(income_prop, na.rm = TRUE),
+            n=n()) %>%
+  arrange(year)
+
+df.year <- left_join(yearlyTerritoryStats,
+                     yearlyTerritoryFeatures,
+             by=c('year'='year')) 
+
+# view(df.year)
 
 
-# summarise territory data per municipality per year ---------------------------
-df.municipality_year <- dataToModel6 %>%
-  relocate(NAME_2, .before=mod_id) %>%
-  mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
-  group_by(NAME_2, Autumn) %>%
-  summarise(sum_fate = sum(Fate_binary),
-            n_territories = n(),
-            prop_disappearance = sum_fate/n_territories,
-            NAME_1 = first(NAME_1),
-            ruggedness_mean = mean(ruggedness_mean),      
-            average_gravel_km = mean(average_gravel_km),
-            average_paved_km = mean(average_paved_km),
-            pop_mean = mean(pop_mean),            
-            mean_snow = mean(mean_snow),
-            mean_artificial_area_total = mean(artificial_area_total),
-            hunt_county2 = mean(hunt_county2),
-            mean_fi = mean(Fi), 
-            mean_maxfi = mean(max_fi),
-            mean_number_neighbour_terr = mean(number_neighbour_terr),
-            mean_bear_density_BZtiff = mean(bear_density_BZtiff),
-            # below metrics collected at the municipality level per year so only
-            # the first element of the vector was used
-            wolfLKill_n = first(wolfLKill_n),
-            wolfLKill_last5y = first(wolfLKill_last5y),
-            sheepAttacks_n = first(sheepAttacks_n),
-            NoAffectedSheep_last5y = first(NoAffectedSheep_last5y),
-            AttackDogs_n = first(AttackDogs_n),
-            AttackDogs_last5y = first(AttackDogs_last5y),
-            IndividualIncome = first(IndividualIncome)) %>%
-  relocate(NAME_1,.after="NAME_2")
+# scale covariates
+df.year$mean_ruggedness_sc = scale(df.year$mean_ruggedness)[,1]      
+df.year$average_gravel_km_sc = scale(df.year$average_gravel_km)[,1] 
+df.year$average_paved_km_sc = scale(df.year$average_paved_km)[,1] 
+df.year$pop_mean_sc = scale(df.year$pop_mean)[,1]            
+df.year$mean_snow_sc = scale(df.year$mean_snow)[,1] 
+df.year$mean_artificial_area_total_sc = scale(df.year$mean_artificial_area_total)[,1]
+df.year$hunt_county2_sc = scale(df.year$hunt_county2)[,1]
+df.year$mean_fi_sc = scale(df.year$mean_fi)[,1] 
+df.year$mean_maxfi_sc = scale(df.year$mean_maxfi)[,1]
+#df.year$mean_number_neighbour_terr_sc = scale(df.year$mean_number_neighbour_terr)[,1] # count data - not scaled 
+df.year$mean_bear_density_BZtiff_sc = scale(df.year$mean_bear_density_BZtiff)[,1]
+#sum_wolfLKill_n = wolfLKill_n # count data - not scaled 
+#sum_wolfLKill_last5y = wolfLKill_last5y # count data - not scaled 
+#sum_sheepAttacks_n = sheepAttacks_n # count data - not scaled 
+#sum_NoAffectedSheep_last5y = NoAffectedSheep_last5y # count data - not scaled 
+#sum_AttackDogs_n = AttackDogs_n # count data - not scaled 
+#sum_AttackDogs_last5y = AttackDogs_last5y # count data - not scaled 
+df.year$mean_IndividualIncome_sc = scale(df.year$mean_IndividualIncome)[,1] # count data - not scaled 
+df.year$mean_income_prop_sc = scale(df.year$mean_income_prop)[,1] # count data - not scaled 
 
-# double checking 
-# head(df.municipality_year)
-# table(df.municipality_year$sum_fate)
-# sum((df.municipality_year$sum_fate))
+write_csv2(df.year,
+          'data/modelInputData/df.year.csv')
 
-# scale data  
-VarsToScale <- c("pop_mean",
-                 "hunt_county2", 
-                 "mean_fi",
-                 "mean_bear_density_BZtiff",
-                 "wolfLKill_n",
-                 "sheepAttacks_n",
-                 "AttackDogs_n")
-
-df.municipality_year_scaled <- df.municipality_year %>%
-  mutate_at(VarsToScale,
-            ~(scale(.) %>% as.vector))
-
-write.csv(df.municipality_year_scaled,
-          'data/modelInputData/df.municipality_year_scaled.csv', row.names = F)
-
-# summarise territory data per municipality ---------------------------------------------------
-df.municipality <- dataToModel6 %>%
-  relocate(NAME_2, .before=mod_id) %>%
-  mutate(Fate_binary = ifelse(is.na(Fate), 0,1)) %>%
+# summarise territory data per municipality ------------------------------------
+municipalityTerritoryStats <- dataToModel8 %>%
+  group_by(territory, Spring) %>%
+  slice_max(mean_fi, with_ties=FALSE) %>%
+  ungroup() %>%
+  arrange(territory, Spring) %>%
+  mutate(year = Spring,.before=mod_id) %>%
   group_by(NAME_2) %>%
-  summarise(NAME_1 = first(NAME_1),
-            sum_fate = sum(Fate_binary),
-            n_territories = n(),
-            prop_disappearance = sum_fate/n_territories,
-            ruggedness_mean = mean(ruggedness_mean),      
-            average_gravel_km = mean(average_gravel_km),
-            average_paved_km = mean(average_paved_km),
-            pop_mean =  mean(pop_mean),            
-            mean_snow = mean(mean_snow),
-            mean_artificial_area_total = mean(artificial_area_total),
-            mean_hunt_county2 = mean(hunt_county2),
-            mean_fi  = mean(Fi), 
-            mean_maxfi = mean(max_fi),
-            mean_number_neighbour_terr = mean(number_neighbour_terr),
-            mean_bear_density_BZtiff = mean(bear_density_BZtiff),
-            sum_wolfLKill_n = sum(wolfLKill_n),
-            sum_sheepAttacks_n = sum(sheepAttacks_n),
-            sum_AttackDogs_n = sum(AttackDogs_n),
-            mean_IndividualIncome = mean(IndividualIncome))
+  summarise(disappearance = sum(Fate == "illegal", na.rm=TRUE),
+            n_territories_without_disap = n()-disappearance,
+            n_territories = n_territories_without_disap+disappearance,
+            prop_disappearance = disappearance/n_territories)
 
+head(municipalityTerritoryStats, n=30)
+
+p3 <- ggplot(municipalityTerritoryStats, aes(x=reorder(NAME_2,+prop_disappearance), y=prop_disappearance)) + 
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90))
+
+municipalityTerritoryFeatures <- territoriesToModel %>%
+  mutate(year = Spring,.before=mod_id) %>%
+  filter(Fate_binary == 1) %>% # filter only disappearances
+  group_by(NAME_2) %>%
+  summarise(mean_ruggedness = mean(ruggedness_mean, na.rm = TRUE),      
+            average_gravel_km = mean(average_gravel_km, na.rm = TRUE),
+            average_paved_km = mean(average_paved_km, na.rm = TRUE),
+            pop_mean = mean(pop_mean, na.rm = TRUE),            
+            mean_snow = mean(mean_snow, na.rm = TRUE),
+            mean_artificial_area_total = mean(artificial_area_total, na.rm = TRUE),
+            hunt_county2 = mean(hunt_county2, na.rm = TRUE),
+            mean_fi = mean(mean_fi, na.rm = TRUE), 
+            mean_maxfi = mean(max_fi, na.rm = TRUE),
+            mean_number_neighbour_terr = mean(number_neighbour_terr, na.rm = TRUE),
+            mean_bear_density_BZtiff = mean(bear_density_BZtiff, na.rm = TRUE),
+            sum_wolfLKill_n = sum(wolfLKill_n, na.rm = TRUE),
+            sum_wolfLKill_last5y = sum(wolfLKill_last5y, na.rm = TRUE),
+            sum_sheepAttacks_n = sum(sheepAttacks_n, na.rm = TRUE),
+            sum_NoAffectedSheep_last5y = sum(NoAffectedSheep_last5y, na.rm = TRUE),
+            sum_AttackDogs_n = sum(AttackDogs_n, na.rm = TRUE),
+            sum_AttackDogs_last5y = sum(AttackDogs_last5y, na.rm = TRUE),
+            mean_IndividualIncome = mean(IndividualIncome, na.rm = TRUE),
+            mean_income_prop = mean(income_prop, na.rm = TRUE),
+            n=n()) %>%
+  arrange(NAME_2)
+
+df.municipality <- left_join(municipalityTerritoryStats,
+                     municipalityTerritoryFeatures,
+                     by=c('NAME_2'='NAME_2')) 
+
+view(df.municipality)
 # double checking 
 # head(df.municipality)
 # table(df.municipality$sum_fate)
 # sum((df.municipality$sum_fate))
 # sum((df.municipality$n_territories))
 
-# scale data  
-VarsToScale <- c("pop_mean",
-                 "hunt_county2", 
-                 "mean_fi",
-                 "mean_bear_density_BZtiff",
-                 "wolfLKill_n",
-                 "sheepAttacks_n",
-                 "AttackDogs_n")
+# scale covariates
+df.municipality$mean_ruggedness_sc = scale(df.municipality$mean_ruggedness)[,1]      
+df.municipality$average_gravel_km_sc = scale(df.municipality$average_gravel_km)[,1] 
+df.municipality$average_paved_km_sc = scale(df.municipality$average_paved_km)[,1] 
+df.municipality$pop_mean_sc = scale(df.municipality$pop_mean)[,1]            
+df.municipality$mean_snow_sc = scale(df.municipality$mean_snow)[,1] 
+df.municipality$mean_artificial_area_total_sc = scale(df.municipality$mean_artificial_area_total)[,1]
+df.municipality$hunt_county2_sc = scale(df.municipality$hunt_county2)[,1]
+df.municipality$mean_fi_sc = scale(df.municipality$mean_fi)[,1] 
+df.municipality$mean_maxfi_sc = scale(df.municipality$mean_maxfi)[,1]
+#df.municipality$mean_number_neighbour_terr_sc = scale(df.municipality$mean_number_neighbour_terr)[,1] # count data - not scaled 
+df.municipality$mean_bear_density_BZtiff_sc = scale(df.municipality$mean_bear_density_BZtiff)[,1]
+#sum_wolfLKill_n = wolfLKill_n # count data - not scaled 
+#sum_wolfLKill_last5y = wolfLKill_last5y # count data - not scaled 
+#sum_sheepAttacks_n = sheepAttacks_n # count data - not scaled 
+#sum_NoAffectedSheep_last5y = NoAffectedSheep_last5y # count data - not scaled 
+#sum_AttackDogs_n = AttackDogs_n # count data - not scaled 
+#sum_AttackDogs_last5y = AttackDogs_last5y # count data - not scaled 
+df.municipality$mean_IndividualIncome_sc = scale(df.municipality$mean_IndividualIncome)[,1] # count data - not scaled 
+df.municipality$mean_income_prop_sc = scale(df.municipality$mean_income_prop)[,1] # count data - not scaled 
 
-df.municipality_scaled <- df.municipality %>%
-  mutate_at(VarsToScale,
-            ~(scale(.) %>% as.vector))
-
-write.csv(df.municipality,
-          'data/modelInputData/df.municipality_scaled.csv', row.names = F)
-
+write_csv2(df.municipality,
+           'data/modelInputData/df.municipality.csv')
 
 # summarise per territory - illegal (disappearance) vs legal fate --------------
 modeldata <- cleandata.join1 %>%
