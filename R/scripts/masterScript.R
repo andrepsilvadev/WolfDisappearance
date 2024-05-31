@@ -5,4 +5,5 @@
 source("R/scripts/libraries.R")
 source("R/scripts/custom_functions.R")
 source("R/scripts/modelInputData.R") # no need to run if csv in data/modelInputData is available
-source("R/scripts/model.R")
+source("R/scripts/model_municipality_binomial.R")
+source("R/scripts/model_year_binomial.R")
