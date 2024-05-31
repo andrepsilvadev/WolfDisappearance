@@ -1,3 +1,5 @@
+Repository for:
+
 # Wolf disappearances in Scandinavia is explained by wolf population size and a cocktail of social correlated variables
 Authors
 André Pinto da Silva, Cecilia Di Bernardi, Giorgia Ausilio, Leticia Duarte, Håkan Sand, Mikael Åkesson, Olof Liberg, Barbara Zimmerman, Petter Wabakken, Øystein Flagstad, Camilla Wikenros
