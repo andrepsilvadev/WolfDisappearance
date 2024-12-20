@@ -1,0 +1,1686 @@
+---
+title: "modelInputData"
+author: "Leticia Duarte"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+editor_options: 
+  chunk_output_type: inline
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 13px;
+  }
+td {  /* Table  */
+  font-size: 12px;
+}
+h1.title {
+  font-size: 20px;
+  font-weight: bold;
+}
+h1 { /* Header 1 */
+  font-size: 20px;
+  font-weight: bold;
+}
+h2 { /* Header 2 */
+    font-size: 17px;
+  font-weight: bold;
+}
+h3 { /* Header 3 */
+    font-size: 15px;
+  font-weight: bold;
+}
+code.r{ /* Code block */
+    font-size: 12px;
+}
+pre{ /* Code block - determines code spacing between lines */
+    font-size: 12px;
+}
+h1, .h1, h2, .h2, h3, .h3, h4, .h4 {
+    margin-top: 24xpx;
+}
+</style>
+
+# 1. Packages
+
+```{r}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(magrittr)
+library(sf)
+library(ggplot2)
+library(cowplot)
+library(remotes)
+#remotes::install_github("Tong-Chen/YSX")
+library("YSX")
+```
+
+# 2. Raw data
+
+```{r}
+# import data
+data <-
+  readr::read_csv2(
+    "rawData/FateWolvesTerritory1998_2020_Scandinavia_Final_CDB.csv",
+    locale = locale(encoding = "ISO-8859-1")
+  )
+
+# data clean
+idvars <- c(colnames(data)[1:13], "KommunerNamn", "SLU.ID")
+explanatoryvars <- c("ruggedness_mean",
+                     "average_gravel_km",
+                     "average_paved_km",
+                     "artificial_area_total",
+                     "pop_mean",
+                     "mean_snow",
+                     "hunt_afo",
+                     "hunt_county2",
+                     "Fi",
+                     "number_neighbour_terr",
+                     "bear_density_BZtiff")
+
+varstoselect <- c(idvars, explanatoryvars)
+
+cleandata <- data %>%
+  dplyr::select(all_of(varstoselect)) %>%
+  dplyr::mutate(mod_id = 1:nrow(data)) %>% 
+  relocate(mod_id, .before = id) %>% 
+  dplyr::mutate(Fate = str_replace(Fate, "Legal", "legal")) %>%
+  dplyr::mutate(Fate = str_replace(Fate, "Illegal", "illegal")) %>%
+  dplyr::mutate(Fate = str_replace(Fate, "censor", "censored")) %>%
+  dplyr::mutate(Fate = str_replace(Fate, "cernsored", "censored")) %>%
+  dplyr::mutate(Fate = str_replace(Fate, "censoreded", "censored")) %>%
+  dplyr::mutate(KommunerNamn = tolower(KommunerNamn)) %>%
+  ungroup()
+```
+
+# 3. Adding variables
+
+## 3.1. Inbreeding
+
+```{r}
+# calculate average and maximum inbreeding per territory
+cleandata_withFi <- 
+  cleandata %>%
+  group_by(territory) %>%
+  dplyr::mutate(mean_fi = mean(Fi),
+         max_fi = max(Fi))
+```
+
+
+## 3.2. Spatial data
+
+```{r}
+norway <-
+  sf::st_read("spatialData/gadm36_NOR_shp/gadm36_NOR_2.shp")
+sweden <-
+  sf::st_read("spatialData/gadm36_SWE_shp/gadm36_SWE_2.shp")
+scandinavia <- rbind(norway, sweden) %>%
+  select(NAME_1, NAME_2, geometry)
+
+# add municipality (gadm classification)
+# convert to spatial data and add gadm names
+dataToModel1 <-
+  st_as_sf(
+    x = cleandata_withFi,
+    #convert to spatial features (sf)
+    coords = c("X_coordinate_fatefile",
+               "Y_coordinate_fatefile"),
+    crs = "EPSG:3021"
+  ) %>% #RT90
+  st_transform(crs = st_crs(scandinavia)) %>%
+  st_intersection(scandinavia) %>% # add gadm names for municipalities
+  st_drop_geometry() # back to data frame
+
+```
+
+## 3.3. Legally killed wolves
+
+```{r}
+# number of legally killed wolves
+killedWolvesData <- readr::read_csv("rawData/Rovbase230311_CW_killed wolves_final.csv") %>%
+  separate(Dødsdato, c("DødsYear", "DødsMonth","DødsDay")) %>%
+  dplyr::mutate(DødsYear = as.numeric(DødsYear),
+         DødsMonth = as.numeric(DødsMonth),
+         DødsDay = as.numeric(DødsDay)) %>%
+  select("RovbaseID", "DødsYear",
+         "Nord (RT90)", "Øst (RT90)") %>% # columns of interest 
+  dplyr::filter(DødsYear > 1998) # remove records outside of the monitoring period
+
+# convert to spatial data
+killedWolvesSpatial <- st_as_sf(x = killedWolvesData,
+                                coords = c("Øst (RT90)", "Nord (RT90)"),
+                                crs = "EPSG:3021") %>% #RT90
+  st_transform(crs = st_crs(scandinavia)) #%>% 
+  #select(RovbaseID,geometry)
+
+# intersect legally killed wolves with scandinavia admn areas
+wolfLKill <- st_intersection(killedWolvesSpatial, scandinavia)
+
+# count legal kills per municipality per year
+wolfLKill_municipality <- wolfLKill %>% dplyr::count(DødsYear, NAME_2) %>%
+  dplyr::rename(wolfLKill_n = n)
+
+
+# build base dataframe 
+kommun <- rep(levels(as.factor(dataToModel1$NAME_2)), # uses the kommunes with wolf territories
+              each=length(c(2000:2022)))
+# data starts in 2000 - see wolfLKill_municipality
+year <- rep(c(2000:2022), length(levels(as.factor(dataToModel1$NAME_2))))
+df <- data.frame(kommun = kommun,year = year)
+
+
+# cumulative sum in the last five years include the target year and the previous 4
+# cumulative slide was calculated based on https://stackoverflow.com/questions/72587840/how-to-get-the-cummean-of-the-last-n-rows-before-the-last-row-using-dplyr
+wolfLKillAllMetrics <- left_join(df,
+                                 wolfLKill_municipality,
+                  by=c('kommun'='NAME_2', 'year'='DødsYear')) %>%
+  #ungroup() %>%
+  group_by(kommun) %>%
+  # replaces NAs by zeros. This considers that records of wolf kills were recorded since 2000 (first year with records)
+  dplyr::mutate_at(c('wolfLKill_n'), ~tidyr::replace_na(.,0)) %>%
+  dplyr::mutate(wolfLKill_last5y = slider::slide_dbl(wolfLKill_n, sum, .before = 4, .after = 0),
+         .after=year) %>%
+  dplyr::mutate(wolfLKill_cumall = cumsum(wolfLKill_n),.after=year)
+
+
+# join to dkommun# join to data to model  
+dataToModel2 <- left_join(dataToModel1,
+                          wolfLKillAllMetrics,
+                          by=c('NAME_2'='kommun', 'Autumn'='year')) %>%
+  # replaces zeros to NAs before 1999 because there was no wolf kill data before 2000
+  dplyr::mutate(wolfLKill_n = ifelse(Autumn <= 1999, NA, wolfLKill_n))
+
+```
+
+## 3.4. Wolf attacks on sheep
+
+```{r}
+# old raw file
+#rovbasedata <- readr::read_csv("data/rawData/rovbaseSample.csv") %>%
+  # sums killed, injured, or missing individuals across the different time spans measured
+  #dplyr::mutate(NoAffectedSheep = rowSums(across("Antal döda under 1 år":"Antal saknade över 2 år"), na.rm = F))
+
+
+# new raw files
+sheep_data <- readr::read_csv("rawData/Wolf attacks on sheep_Rovbase 230131_Sweden_Norway.csv") %>%
+  dplyr::mutate(NoAffectedSheep = Antall)
+
+# select attack id, date and coordinates (check if coordinate system is the same as in scandinavia)
+sheep_data2 <- sheep_data[c("Skada på", "Fynddatum",
+                                          "NoAffectedSheep", "Kommune",
+                                          "Nord (RT90)", "Öst (RT90)")]
+
+sheep_data2$coord <- paste0(sheep_data2$`Nord (RT90)`, ",", sheep_data2$`Öst (RT90)`)
+
+# group rows that represent the same event from norway according to date and location
+grouped_sheep <- sheep_data2 %>%
+  group_by(Fynddatum,coord) %>% # group by unique date and coordinates
+  summarize(
+    Kommune = first(Kommune), # keep the first
+    `Skada på` = first(`Skada på`),
+    `Nord (RT90)` = first(`Nord (RT90)`),
+    `Öst (RT90)` = first(`Öst (RT90)`),
+    NoAffectedSheep = sum(NoAffectedSheep)  # sum the number of attacks
+  ) %>%
+  ungroup()  # ungroup to return to a normal data frame
+
+# select attack id, date and coordinates (check if coordinate system is the same as in scandinavia)
+killedsheepclean <- grouped_sheep %>% select("Skada på", "Fynddatum",
+                                           "NoAffectedSheep", "Kommune",
+                                           "Nord (RT90)", "Öst (RT90)") %>%
+  na.omit() %>%
+  dplyr::filter(`Skada på` %in% c("Får")) %>% # select only sheep
+  separate(Fynddatum, c("day","month","year")) %>% 
+  dplyr::mutate(year = as.numeric(year)) #%>%
+  #filter(year>=1998) 
+
+# read as spatial points and change coordinate to RT90
+killedsheepSpatial <- st_as_sf(x = killedsheepclean,
+                               coords = c("Öst (RT90)", "Nord (RT90)"),
+                               crs = "EPSG:3021") %>% #RT90
+  st_transform(crs = st_crs(scandinavia)) %>% 
+  select(year, "NoAffectedSheep", geometry) 
+
+# intersect sheep attacks with scandinavia admn areas
+sheepAttacks <- st_intersection(killedsheepSpatial, scandinavia)
+
+# count number of sheep killed  and number of attacks per municipality
+sheepAffected_municipality <- sheepAttacks %>%
+  dplyr::group_by(year, NAME_2) %>%
+  dplyr::summarise(NoAffectedSheep = sum(NoAffectedSheep),
+            n = n(),.groups = "drop") %>%
+  dplyr::rename(sheepAttacks_n = n)
+
+# build base dataframe 
+kommun <- rep(levels(as.factor(dataToModel2$NAME_2)), # uses the kommunes with wolf territories
+              each=length(c(1995:2021)))
+# data starts in 1995 - see sheepAffected_municipality
+year <- rep(c(1995:2021), length(levels(as.factor(dataToModel2$NAME_2))))
+df <- data.frame(kommun = kommun,year = year)
+
+# cumulative metrics
+# cumulative sum in the last five years include the target year and the previous 4
+# cumulative slide was calculated based on https://stackoverflow.com/questions/72587840/how-to-get-the-cummean-of-the-last-n-rows-before-the-last-row-using-dplyr
+sheepAllMetrics <- left_join(df,
+                             sheepAffected_municipality,
+                  by=c('kommun'='NAME_2', 'year'='year')) %>%
+  dplyr::group_by(kommun) %>%
+  # replaces NAs by zeros. This considers that records of sheep events were recorded since 1995 (first year with records)
+  mutate_at(c('NoAffectedSheep','sheepAttacks_n'), ~replace_na(.,0)) %>%
+  dplyr::mutate(NoAffectedSheep_last5y = slider::slide_dbl(NoAffectedSheep, sum, .before = 4, .after = 0),
+         .after=year) %>%
+  dplyr::mutate(NoAffectedSheep_cumall = cumsum(NoAffectedSheep),.after=year)
+ 
+# join to data to model  
+dataToModel3 <- left_join(dataToModel2,
+                      sheepAllMetrics,
+                      by=c('NAME_2'='kommun', 'Autumn'='year'))
+
+```
+
+### 3.4.1. Add variable of all wolf attacks on sheep (includes outside of municipalities with territories)
+
+```{r}
+
+# build base dataframe 
+kommun <- rep(levels(as.factor(sheepAffected_municipality$NAME_2)), # uses all kommunes (including without wolf territories)
+              each=length(c(1995:2021)))
+# data starts in 1995 - see sheepAffected_municipality
+year <- rep(c(1995:2021), length(levels(as.factor(sheepAffected_municipality$NAME_2))))
+df <- data.frame(kommun = kommun,year = year)
+
+# cumulative metrics
+# cumulative sum in the last five years include the target year and the previous 4
+# cumulative slide was calculated based on https://stackoverflow.com/questions/72587840/how-to-get-the-cummean-of-the-last-n-rows-before-the-last-row-using-dplyr
+sheepAllMetrics2 <- left_join(df,
+                             sheepAffected_municipality,
+                  by=c('kommun'='NAME_2', 'year'='year')) %>%
+  dplyr::group_by(kommun) %>%
+  # replaces NAs by zeros. This considers that records of sheep events were recorded since 1995 (first year with records)
+  mutate_at(c('NoAffectedSheep','sheepAttacks_n'), ~replace_na(.,0)) %>%
+  dplyr::mutate(NoAffectedSheep_last5y_v2 = slider::slide_dbl(NoAffectedSheep, sum, .before = 4, .after = 0),
+         .after=year) %>%
+  dplyr::mutate(NoAffectedSheep_cumall_v2 = cumsum(NoAffectedSheep),.after=year)
+ 
+# join to data to model  
+dataToModel3_v2 <- left_join(sheepAllMetrics2,
+                            dataToModel3,
+                            by=c('kommun'='NAME_2', 'year'='Autumn'))
+
+
+```
+
+## 3.5. Wolf attacks on dogs
+
+```{r}
+dogData <- readr::read_csv("rawData/Wolf attacks on dogs Sweden and Norway_Rovbase 230131_230210_CW.csv") %>%
+  # sums killed, injured, or missing individuals across the different time spans measured
+  #dplyr::mutate(NoAffectedDogs = rowSums(across("Antal döda under 1 år":"Antal saknade över 2 år"), na.rm = F)) #excludes data from Norway
+  dplyr::mutate(NoAffectedDogs = Antall) #includes data from Norway
+
+# select attack id, date and coordinates (check if coordinate system is the same as in scandinavia)
+AttacksDogclean <- dogData %>% select("HändelseID", "Country", "Fynddatum", "NoAffectedDogs", "Kommune",
+                                   "Nord (RT90)", "Öst (RT90)") %>%
+  na.omit() %>%
+  separate(Fynddatum, c("year","month","day")) %>%
+  dplyr::filter(year >= 1995) %>% # original span is 1995-2022
+  dplyr::mutate(year = as.numeric(year))
+
+# read as spatial points and change coordinate to RT90
+AttacksDogSpatial <- st_as_sf(x = AttacksDogclean,
+                           coords = c("Öst (RT90)", "Nord (RT90)"),
+                           crs = "EPSG:3021") %>% #RT90
+  st_transform(crs = st_crs(scandinavia)) %>% 
+  select(HändelseID, NoAffectedDogs, year, geometry)
+
+# intersect attacks on dogs with scandinavia admn areas
+AttackDogs <- st_intersection(AttacksDogSpatial, scandinavia)
+
+# count number of attacks on dogs per year and per municipality
+AttackDogs_municipality <- AttackDogs %>%
+  group_by(year, NAME_2) %>%
+  dplyr::summarise(n = n(),.groups = "drop") %>%
+  dplyr::rename(AttackDogs_n = n)
+
+# build base dataframe 
+kommun <- rep(levels(as.factor(dataToModel3$NAME_2)),
+              each=length(c(1995:2021)))
+# data starts in 1995 - see AttackDogs_municipality
+year <- rep(c(1995:2021), length(levels(as.factor(dataToModel3$NAME_2))))
+df <- data.frame(kommun = kommun,year = year)
+
+# cumulative metrics
+# cumulative sum in the last five years include the target year and the previous 4
+# cumulative slide was calculated based on https://stackoverflow.com/questions/72587840/how-to-get-the-cummean-of-the-last-n-rows-before-the-last-row-using-dplyr
+dogAllMetrics <- left_join(df,
+                           AttackDogs_municipality,
+                           by=c('kommun'='NAME_2', 'year'='year')) %>%
+  dplyr::group_by(kommun) %>%
+  # replaces NAs by zeros. This considers that records of sheep events were recorded since 1995
+  # (first year with records)
+  mutate_at(c('AttackDogs_n'), ~replace_na(.,0)) %>%
+  dplyr::mutate(AttackDogs_last5y = slider::slide_dbl(AttackDogs_n, sum, .before = 4, .after = 0),
+         .after=year) %>%
+  dplyr::mutate(AttackDogs_cumall = cumsum(AttackDogs_n),.after=year)
+
+# join to data to model  
+dataToModel4 <- left_join(dataToModel3,
+                          dogAllMetrics,
+                          by=c('NAME_2'='kommun', 'Autumn'='year'))
+```
+
+
+## 3.6. Individual income
+
+```{r}
+# individual income data (1991-2021, only Sweden) per municipality
+
+# individual income was extracted for Sweden and Norway separately 
+# is my understanding that both refer to gross income. Norway data is NOK, Sweden data is in SEK - I have ignored the difference 
+# the links used for extraction are
+# Sweden https://www.scb.se/en/finding-statistics/statistics-by-subject-area/household-finances/income-and-income-distribution/income-and-tax-statistics/
+# Norway https://www.ssb.no/en/statbank/table/05854/
+
+individualIncomeDataSweden <- readr::read_csv("rawData/avg_income_municipalities_1991_2021.csv",
+                              locale = locale(encoding = "ISO-8859-1")) %>%
+  tidyr::gather(key="Year", value ="IndividualIncome", -Kommun) %>%
+  separate_wider_delim(Year, "_", names = c("x", "Year")) %>%
+  dplyr::mutate(Year = as.numeric(Year)) %>%
+  dplyr::mutate(Kommun = str_replace(Kommun, ' LÄN', '')) %>%
+  dplyr::mutate(Kommun = str_to_title(Kommun)) %>% # turns first letter of each word in caps
+  dplyr::mutate(Kommun = str_replace(Kommun, "Upplands Väsby", "Upplands-Väsby")) %>%
+  dplyr::mutate(Kommun = str_replace(Kommun, "Heby2", "Heby")) %>%
+  dplyr::mutate(Kommun = str_replace(Kommun, " ", "")) %>% # remove possible empty spaces %>%
+  select(-x) %>%
+  # replace zeros from kommunes with no data in early years
+  dplyr::mutate(IndividualIncome=ifelse(IndividualIncome==0,NA,IndividualIncome))
+
+
+# data from Norway
+# add to manually remove contact details and comments from the
+# bottom of the original excel file
+# found the unique kommunes in the monitoring dataset for Norway
+# selected manually in the norway income datafile
+# data for Romskog fo2020 and 2021 seems to be missing
+# valer there were two. Had to manually go to the wolf dataset and see where the geographic location matched.
+# It is identified in the income dataset as Våler while the other Våler found in the income
+# dataset I have identified as Våler2
+
+individualIncomeDataNorway <- readr::read_csv("rawData/Norway_averageIndividualGrossIncome1991_2021_municipalities1965_manuallyEdited.csv") %>%
+  group_by(kommun) %>%
+  select(-c("kommun original","age","metric")) %>%
+  dplyr::summarise(across(everything(), sum)) %>%
+  dplyr::mutate(across(where(is.numeric), ~na_if(., 0))) %>% # replaces NAs across all dataframe
+  pivot_longer(cols=c(2:24),
+               names_to='Year',
+               values_to='IndividualIncome') %>%
+  dplyr::rename(Kommun = kommun) %>%
+  dplyr::mutate(Year = as.numeric(Year))
+
+individualIncomeData <- bind_rows(individualIncomeDataSweden,individualIncomeDataNorway) %>%
+  # difference to year average to remove correlation with year (income increases over year)
+  group_by(Year) %>%
+  dplyr::mutate(year_average = mean(IndividualIncome,na.rm = TRUE),
+         income_prop = IndividualIncome/year_average)
+
+# head(individualIncomeData)
+# view(individualIncomeData)
+
+# the following observations seem to have the wrong country attributed based on the kommune assigned. The kommune 
+# was double-checked with the overlap with gadmn kommunes
+kommunesWithWrongCountry <- c("Aurskog-Høland","Enebakk","Aremark","Dals-Ed",
+                              "Halden","Rømskog","Åsnes","Eidskog","Grue",
+                              "Kongsvinger","Trysil","Våler")  
+
+dataToModel4 <-
+  dataToModel4 %>%
+  dplyr::mutate(
+    Country_fatefile = ifelse(
+      NAME_2 %in% kommunesWithWrongCountry,
+      str_replace(Country_fatefile, "S", "N"),
+      Country_fatefile
+    )
+  )
+
+dataToModel5 <-
+  left_join(
+    dataToModel4,
+    individualIncomeData,
+    by = c('NAME_2' = 'Kommun', 'Autumn' = 'Year')
+    )
+```
+
+
+## 3.7. Prepare the data
+
+```{r}
+# add years since first detection for test with survival analyses
+dataToModel6 <- 
+  dataToModel5 %>%
+  group_by(territory) %>%
+  dplyr::mutate(
+    first_yeardet = min(Autumn),
+    last_yeardet = max(Autumn),
+    years_firstdet = Autumn - first_yeardet,
+    time_start = Autumn - first_yeardet,
+    time_end = Spring - first_yeardet
+  ) 
+
+# add population size
+# note: in this way legally removed territories in one year or territories that
+# disappeared due to natural causes are still considered in the census of that
+# spring. The same for other causes of death 
+wolfPopSize <-
+  dataToModel6 %>%
+  group_by(Spring) %>%
+  dplyr::summarise(
+    Spring = unique(Spring),
+    # number of unique territories per year, independently of their fate
+    wolfPopSize = length(unique(territory))
+  )
+
+dataToModel7 <-
+  left_join(
+    dataToModel6,
+    wolfPopSize,
+    by = c('Spring' = 'Spring')
+  )
+  
+# prepare for correlation analyses
+dataToModel8 <- 
+  dataToModel7 %>%
+  relocate(c(NAME_1, NAME_2), .after = Comment) %>%
+  select(-c(geometry.x, geometry.y, geometry)) %>%
+  #relocate(geometry, .after = Comment) %>%
+  relocate(income_prop, .after = IndividualIncome) %>%
+  relocate(wolfPopSize, .after = income_prop)
+#mutate_at(c("wolfLKill_cumall", "wolfLKill_n", "sheepAttacks_n",
+#            "AttackDogs_cumall", "AttackDogs_n"),
+#          ~as.numeric(.))
+
+```
+
+
+# 4. Model input data
+
+## 4.1. Territory level
+
+```{r}
+# territory selection 
+# Note: function tested by Cecilia and Giorgia
+# territorySelection_testFunctionsCeciliaGiorgia.R
+# inconsistencies detected for instance when there is combination of fates such
+# as "illegal", "other" - 6 territories and "illegal", "legal" - 12 territories 
+territoriesToModel <- dataToModel8 %>%
+  group_by(territory) %>%
+  # only keep territories that have "NA","illegal" or,"censored" in their fate
+  # by excluding other fates
+  dplyr::filter(!any(Fate %in% c("other","legal","natural","traffic"))) %>% # 291
+  # keep the row with the maximum inbreeding, if tied keep the first row
+  group_by(territory, Autumn) %>%
+  slice_max(mean_fi, with_ties=FALSE) %>% 
+  # add column to double-check potential duplicate rows within territories 
+  #mutate(Autumn_dup = duplicated(Autumn)) %>%
+  ungroup() %>%
+  dplyr::mutate(Fate_binary = ifelse(is.na(Fate), 0,1),.after=Fate) %>%
+  arrange(territory, Autumn)
+
+length(unique(territoriesToModel$territory)) # 291
+nrow(territoriesToModel) # 642 only one individual per territory
+unique(territoriesToModel$Fate)
+
+# count disappearances and ongoing territories per year ------------------------
+df <- territoriesToModel %>% 
+  group_by(Spring) %>%
+  dplyr::summarise(
+    ongoing = sum(is.na(Fate)==TRUE),
+    disappearance = sum(Fate %in% c("illegal" ,"censored")),
+    sum = ongoing + disappearance,
+    prop_disappearance = round(disappearance/sum, 2),
+    n()
+  )
+
+sum(df$disappearance) # 193 # double checking
+sum(df$ongoing) # 449 # double checking
+print(df, n=30)
+
+# plot disappearance rate - it does not match the plot from Liberg et al. 2020
+# I cannot calculate prop. disappearance and total number of territories
+# like this because I am excluding territories with other fates (it influences the sum)
+# what are the implications for the territory analyses?
+# the plot
+ggplot(data=df, aes(x=Spring, y=prop_disappearance, group=1)) +
+  geom_line()+
+  geom_point()
+
+# model data scaled ------------------------------------------------------------
+# for some reason scale with dplyr and mutate was producing nan
+# count data not scaled
+modeldatascaled <- territoriesToModel
+modeldatascaled$ruggedness_mean_sc <- scale(modeldatascaled$ruggedness_mean)[,1] 
+modeldatascaled$average_gravel_km_sc <- scale(modeldatascaled$average_gravel_km)[,1] 
+modeldatascaled$average_paved_km_sc <- scale(modeldatascaled$average_paved_km)[,1]       
+modeldatascaled$artificial_area_total_sc <- scale(modeldatascaled$artificial_area_total)[,1] 
+modeldatascaled$pop_mean_sc <- scale(modeldatascaled$pop_mean)[,1]               
+modeldatascaled$mean_snow_sc <- scale(modeldatascaled$mean_snow)[,1] 
+modeldatascaled$hunt_afo_sc <- scale(modeldatascaled$hunt_afo)[,1]              
+modeldatascaled$hunt_county2_sc <- scale(modeldatascaled$hunt_county2)[,1] 
+modeldatascaled$number_neighbour_terr_sc <- scale(modeldatascaled$number_neighbour_terr)[,1]
+modeldatascaled$bear_density_BZtiff_sc <- scale(modeldatascaled$bear_density_BZtiff)[,1] 
+modeldatascaled$Fi_sc <- scale(modeldatascaled$Fi)[,1] 
+modeldatascaled$mean_fi_sc <- scale(modeldatascaled$mean_fi)[,1] 
+modeldatascaled$max_fi_sc <- scale(modeldatascaled$max_fi)[,1]               
+# modeldatascaled$wolfLKill_cumall_sc <- scale(modeldatascaled$wolfLKill_cumall)[,1]  # count data - not scaled 
+modeldatascaled$wolfLKill_last5y_sc <- scale(modeldatascaled$wolfLKill_last5y)[,1]     
+# modeldatascaled$wolfLKill_n_sc <- scale(modeldatascaled$wolfLKill_n)[,1]  # count data - not scaled 
+# modeldatascaled$NoAffectedSheep_cumall_sc <- scale(modeldatascaled$NoAffectedSheep_cumall)[,1]  # count data - not scaled 
+modeldatascaled$NoAffectedSheep_last5y_sc <- scale(modeldatascaled$NoAffectedSheep_last5y)[,1]
+# modeldatascaled$NoAffectedSheep_sc <- scale(modeldatascaled$NoAffectedSheep)[,1]  # count data - not scaled       
+# modeldatascaled$sheepAttacks_n_sc <- scale(modeldatascaled$sheepAttacks_n)[,1]  # count data - not scaled 
+# modeldatascaled$AttackDogs_cumall_sc <- scale(modeldatascaled$AttackDogs_cumall)[,1]  # count data - not scaled      
+modeldatascaled$AttackDogs_last5y_sc <- scale(modeldatascaled$AttackDogs_last5y)[,1]
+# modeldatascaled$AttackDogs_n_sc <- scale(modeldatascaled$AttackDogs_n)[,1]  # count data - not scaled         
+modeldatascaled$IndividualIncome_sc <- scale(modeldatascaled$IndividualIncome)[,1] 
+modeldatascaled$income_prop_sc <- scale(modeldatascaled$income_prop)[,1]
+modeldatascaled$wolfPopSize_sc <- scale(modeldatascaled$wolfPopSize)[,1]
+
+df.territory <- as_tibble(modeldatascaled)
+
+# territory data
+write.csv(df.territory,'modelInputData/df.territory.csv')
+
+```
+
+### 4.1.1. Correlations
+
+```{r}
+## correlations with all variables ---------------------------------------------
+colnames(territoriesToModel)
+covToCorrelate_terr <- territoriesToModel[18:43]
+
+cormat <- round(
+  cor(
+    covToCorrelate_terr,
+    use = "pairwise.complete.obs",
+    method = "spearman"),
+  2)
+
+cormat
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+p1_terr <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - territory level - all covariates") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,
+                                   hjust = 1, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  geom_text(aes(Var2, Var1, label = value), color = "white", size = 4.5)
+p1_terr
+
+# highlyCorrelatedVars <- melted_cormat %>%
+#   filter(value >0.5 | value < -0.5)
+#highlyCorrelatedVars
+
+## correlation between metrics for the same variable ---------------------------
+VarsToTest <- c("AttackDogs_last5y",
+                "AttackDogs_n",
+                "AttackDogs_cumall") # keep AttackDogs_last5y
+
+VarsToTest <- c("NoAffectedSheep_cumall",
+                "NoAffectedSheep_last5y",
+                "NoAffectedSheep",
+                "sheepAttacks_n") # keep NoAffectedSheep_last5y
+
+VarsToTest <- c("wolfLKill_cumall",
+                "wolfLKill_last5y",
+                "wolfLKill_n") # keep wolfLKill_last5y
+
+VarsToTest <- c("hunt_afo",
+                "hunt_county2") # not correlated but keep hunt_county2 (density)
+
+VarsToTest <- c("average_gravel_km",
+                "average_paved_km") # keep average_gravel_km
+
+VarsToTest <- c("IndividualIncome",
+                "income_prop") # keep income_prop
+
+VarsToTest <- c("mean_fi",
+                "max_fi") # keep mean_fi
+
+
+subset <- covToCorrelate_terr %>%
+  select(all_of(VarsToTest))
+
+sub_cormat <- round(
+  cor(
+    subset,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri <- get_upper_tri(sub_cormat)
+sub_melted_cormat <-
+  reshape2::melt(sub_upper_tri, na.rm = TRUE)
+
+p2_sub <- ggplot(sub_melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Territory level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p2_sub
+
+# subset the covariates to keep
+subset_keep <- territoriesToModel[c("wolfPopSize","ruggedness_mean",
+                                    "average_gravel_km","artificial_area_total",
+                                    "pop_mean","mean_snow","AttackDogs_last5y",
+                                    "NoAffectedSheep_last5y","wolfLKill_last5y",
+                                    "hunt_county2","income_prop",
+                                    "bear_density_BZtiff","number_neighbour_terr",
+                                    "mean_fi")]
+
+# change covariates names
+colnames(subset_keep) <- c("WolfPopSize","TerrRug","GravelRoad",
+                            "ArtificialArea","HumanDens","SnowCover",
+                            "DogAttacks_last5y","SheepAttacks_last5y",
+                            "LegWolfHarv_last5y","MooseHarv","IncomeProp",
+                            "BearHarv","WolfNeighbourTerr","Mean_InbreedCoef")
+
+
+## correlation between covariates representing the same mechanism --------------
+VarsToTest2 <- c("TerrRug",
+                "GravelRoad",
+                "ArtificialArea",
+                "HumanDens",
+                "SnowCover")
+
+VarsToTest2 <- c("DogAttacks_last5y",
+                "SheepAttacks_last5y",
+                "LegWolfHarv_last5y",
+                "MooseHarv",
+                "IncomeProp")  
+
+VarsToTest2 <- c("BearHarv",
+                "WolfNeighbourTerr")
+
+sub_VarsToTest2 <- subset_keep %>%
+  select(all_of(VarsToTest2))
+
+sub_cormat2 <- round(
+  cor(
+    sub_VarsToTest2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri2 <- get_upper_tri(sub_cormat2)
+sub_melted_cormat2 <-
+  reshape2::melt(sub_upper_tri2, na.rm = TRUE)
+
+p3_sub <- ggplot(sub_melted_cormat2, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Territory level - Accessibility") +
+  #change title depending on the hypothesis
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p3_sub
+
+
+## correlations between chosen variables ---------------------------------------
+
+sub_cormat3 <- round(
+  cor(
+    subset_keep,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri3 <- get_upper_tri(sub_cormat3)
+sub_melted_cormat3 <-
+  reshape2::melt(sub_upper_tri3, na.rm = TRUE)
+
+p4_sub <- ggplot(sub_melted_cormat3, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Territory level - Chosen variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p4_sub
+
+
+
+## correlations of final covariates --------------------------------------------
+
+subset_keep2 <- subset_keep[c("WolfPopSize","TerrRug","GravelRoad",
+                              "ArtificialArea","HumanDens",
+                              "DogAttacks_last5y","SheepAttacks_last5y",
+                              "LegWolfHarv_last5y","IncomeProp",
+                              "BearHarv","WolfNeighbourTerr","Mean_InbreedCoef")]
+
+sub_cormat4 <- round(
+  cor(
+    subset_keep2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri4 <- get_upper_tri(sub_cormat4)
+sub_melted_cormat4 <-
+  reshape2::melt(sub_upper_tri4, na.rm = TRUE)
+
+p5_sub <- ggplot(sub_melted_cormat4, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Territory level - Final variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p5_sub
+
+```
+
+### 4.1.2. Calculate min, max and mean
+
+```{r}
+min_cov <- format(sapply(df.territory,min, na.rm = TRUE), scientific = FALSE)
+min_cov <- as.data.frame(min_cov)
+
+max_cov <- format(sapply(df.territory,max, na.rm = TRUE), scientific = FALSE)
+max_cov <- as.data.frame(max_cov)
+
+mean_cov <- format(sapply(df.territory,mean, na.rm = TRUE), scientific = FALSE)
+mean_cov <- as.data.frame(mean_cov)
+
+var <- data.frame(min_cov, max_cov, mean_cov)
+
+write.csv(var, "info_variables_territory.csv")
+
+```
+
+## 4.2. Population level
+
+```{r}
+# summarise territory data per year
+# adopted from territory selection but includes all fates to calculate pop.size
+yearlyTerritoryStats <- 
+  dataToModel8 %>%
+  group_by(territory, Spring) %>%
+  slice_max(mean_fi, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(territory, Spring) %>%
+  dplyr::mutate(year = Spring, .before = mod_id) %>%
+  group_by(year) %>%
+  dplyr::summarise(
+    wolfPopSize = length(unique(territory)),
+    disappearance = sum(Fate == "illegal", na.rm = TRUE),
+    n_territories_without_disap = wolfPopSize - disappearance,
+    prop_disappearance = disappearance / wolfPopSize,
+  )
+#head(yearlyTerritoryStats, n=30)
+
+
+yearlyTerritoryFeatures <- territoriesToModel %>%
+  dplyr::mutate(year = Spring, .before = mod_id) %>%
+  group_by(year) %>%
+  #dplyr::filter(Fate_binary == 1) %>% # filter only disappearances
+  dplyr::summarise(
+    mean_ruggedness = mean(ruggedness_mean, na.rm = TRUE),
+    average_gravel_km = mean(average_gravel_km, na.rm = TRUE),
+    average_paved_km = mean(average_paved_km, na.rm = TRUE),
+    pop_mean = mean(pop_mean, na.rm = TRUE),
+    mean_snow = mean(mean_snow, na.rm = TRUE),
+    mean_artificial_area_total = mean(artificial_area_total, na.rm = TRUE),
+    hunt_county2 = mean(hunt_county2, na.rm = TRUE),
+    mean_fi = mean(mean_fi, na.rm = TRUE),
+    mean_maxfi = mean(max_fi, na.rm = TRUE),
+    mean_number_neighbour_terr = mean(number_neighbour_terr, na.rm = TRUE),
+    mean_bear_density_BZtiff = mean(bear_density_BZtiff, na.rm = TRUE),
+    sum_wolfLKill_n = sum(wolfLKill_n, na.rm = TRUE),
+    sum_wolfLKill_last5y = sum(wolfLKill_last5y, na.rm = TRUE),
+    sum_sheepAttacks_n = sum(sheepAttacks_n, na.rm = TRUE),
+    sum_NoAffectedSheep_last5y = sum(NoAffectedSheep_last5y, na.rm = TRUE),
+    sum_AttackDogs_n = sum(AttackDogs_n, na.rm = TRUE),
+    sum_AttackDogs_last5y = sum(AttackDogs_last5y, na.rm = TRUE),
+    mean_IndividualIncome = mean(IndividualIncome, na.rm = TRUE),
+    mean_income_prop = mean(income_prop, na.rm = TRUE),
+    n = n()
+  ) %>%
+  arrange(year)
+
+df.year <- left_join(yearlyTerritoryStats,
+                     yearlyTerritoryFeatures,
+                     by = c('year' = 'year'))
+
+# scale covariates
+df.year$mean_ruggedness_sc = scale(df.year$mean_ruggedness)[,1]      
+df.year$average_gravel_km_sc = scale(df.year$average_gravel_km)[,1] 
+df.year$average_paved_km_sc = scale(df.year$average_paved_km)[,1] 
+df.year$pop_mean_sc = scale(df.year$pop_mean)[,1]            
+df.year$mean_snow_sc = scale(df.year$mean_snow)[,1] 
+df.year$mean_artificial_area_total_sc = scale(df.year$mean_artificial_area_total)[,1]
+df.year$hunt_county2_sc = scale(df.year$hunt_county2)[,1]
+df.year$mean_fi_sc = scale(df.year$mean_fi)[,1] 
+df.year$mean_maxfi_sc = scale(df.year$mean_maxfi)[,1]
+df.year$mean_number_neighbour_terr_sc = scale(df.year$mean_number_neighbour_terr)[,1] 
+df.year$mean_bear_density_BZtiff_sc = scale(df.year$mean_bear_density_BZtiff)[,1]
+#sum_wolfLKill_n = wolfLKill_n # count data - not scaled 
+df.year$sum_wolfLKill_last5y_sc = scale(df.year$sum_wolfLKill_last5y)[,1]
+#sum_sheepAttacks_n = sheepAttacks_n # count data - not scaled 
+df.year$sum_NoAffectedSheep_last5y_sc = scale(df.year$sum_NoAffectedSheep_last5y)[,1] 
+#sum_AttackDogs_n = AttackDogs_n # count data - not scaled 
+df.year$sum_AttackDogs_last5y_sc = scale(df.year$sum_AttackDogs_last5y)[,1]
+df.year$mean_IndividualIncome_sc = scale(df.year$mean_IndividualIncome)[,1] # count data - not scaled 
+df.year$mean_income_prop_sc = scale(df.year$mean_income_prop)[,1] 
+df.year$wolfPopSize_sc <- scale(df.year$wolfPopSize)[,1]
+
+write_csv2(df.year,
+          'modelInputData/df.year.csv')
+
+```
+
+### 4.2.1. Correlations
+
+```{r}
+# Note: covariate correlation had to be calculated for the different scales as 
+# big discrepancies between scales were detected
+colnames(df.year)
+df.year2 <- df.year[2:24]
+
+covToCorrelate_pop <- df.year2 %>%
+  select(-c("disappearance", "n_territories_without_disap"))
+
+cormat <- round(
+  cor(
+    covToCorrelate_pop,
+    use = "pairwise.complete.obs",
+    method = "spearman"),
+  2)
+
+cormat
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+p1_pop <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - population level - all covariates") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,
+                                   hjust = 1, size = 13)) +
+  theme(axis.text.y = element_text(size = 13)) +
+  geom_text(aes(Var2, Var1, label = value), color = "white", size = 4.5)
+p1_pop  
+
+## correlation between metrics for the same variable ---------------------------
+
+VarsToTest <- c("sum_AttackDogs_last5y",
+                "sum_AttackDogs_n") # keep sum_AttackDogs_last5y
+
+VarsToTest <- c("sum_sheepAttacks_n",
+                "sum_NoAffectedSheep_last5y") # keep sum_NoAffectedSheep_last5
+
+VarsToTest <- c("sum_wolfLKill_n",
+                "sum_wolfLKill_last5y") # keep sum_wolfLKill_last5y
+
+VarsToTest <- c("average_gravel_km",
+                "average_paved_km") # keep both
+
+VarsToTest <- c("mean_IndividualIncome",
+                "mean_income_prop") # keep mean_income_prop
+
+VarsToTest <- c("mean_fi",
+                "mean_maxfi") # keep mean_fi
+
+subset <- covToCorrelate %>%
+  select(all_of(VarsToTest))
+
+sub_cormat <- round(
+  cor(
+    subset,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri <- get_upper_tri(sub_cormat)
+sub_melted_cormat <-
+  reshape2::melt(sub_upper_tri, na.rm = TRUE)
+
+p2_sub <- ggplot(sub_melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Population level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p2_sub
+
+# subset the covariates to keep
+subset_keep <- covToCorrelate_pop[c("wolfPopSize","mean_ruggedness",
+                                "average_gravel_km", "average_paved_km",
+                                "mean_artificial_area_total","pop_mean",
+                                "mean_snow","sum_AttackDogs_last5y",
+                                "sum_NoAffectedSheep_last5y",
+                                "sum_wolfLKill_last5y", "hunt_county2",
+                                "mean_income_prop","mean_bear_density_BZtiff",
+                                "mean_number_neighbour_terr","mean_fi")]
+
+# change covariates names
+colnames(subset_keep) <- c("WolfPopSize","TerrRug","GravelRoad","PavedRoad",
+                           "ArtificialArea","HumanDens","SnowCover",
+                           "DogAttacks_last5y","SheepAttacks_last5y",
+                           "LegWolfHarv_last5y","MooseHarv","IncomeProp",
+                           "BearHarv","WolfNeighbourTerr","Mean_InbreedCoef")
+
+
+## correlation between covariates representing the same mechanism --------------
+
+VarsToTest2 <- c("TerrRug",
+                 "GravelRoad",
+                 "PavedRoad",
+                 "ArtificialArea",
+                 "HumanDens",
+                 "SnowCover")
+
+VarsToTest2 <- c("DogAttacks_last5y",
+                 "SheepAttacks_last5y",
+                 "LegWolfHarv_last5y",
+                 "MooseHarv",
+                 "IncomeProp")  
+
+VarsToTest2 <- c("BearHarv",
+                 "WolfNeighbourTerr")
+
+sub_VarsToTest2 <- subset_keep %>%
+  select(all_of(VarsToTest2))
+
+sub_cormat2 <- round(
+  cor(
+    sub_VarsToTest2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri2 <- get_upper_tri(sub_cormat2)
+sub_melted_cormat2 <-
+  reshape2::melt(sub_upper_tri2, na.rm = TRUE)
+
+p3_sub <- ggplot(sub_melted_cormat2, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Population level - Socio-economic") +
+  #change title depending on the hypothesis
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p3_sub
+
+## correlations between chosen variables ---------------------------------------
+
+sub_cormat3 <- round(
+  cor(
+    subset_keep,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri3 <- get_upper_tri(sub_cormat3)
+sub_melted_cormat3 <-
+  reshape2::melt(sub_upper_tri3, na.rm = TRUE)
+
+p4_sub <- ggplot(sub_melted_cormat3, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Population level - Chosen variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p4_sub
+
+
+## correlations of final covariates --------------------------------------------
+
+subset_keep2 <- subset_keep[c("WolfPopSize","GravelRoad","SnowCover","TerrRug",
+                              "HumanDens","Mean_InbreedCoef")]
+
+sub_cormat4 <- round(
+  cor(
+    subset_keep2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri4 <- get_upper_tri(sub_cormat4)
+sub_melted_cormat4 <-
+  reshape2::melt(sub_upper_tri4, na.rm = TRUE)
+
+p5_sub <- ggplot(sub_melted_cormat4, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Population level - Final variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p5_sub
+
+```
+
+### 4.2.2. Calculate min, max and mean
+
+```{r}
+
+min_cov <- format(sapply(df.year,min, na.rm = TRUE), scientific = FALSE)
+min_cov <- as.data.frame(min_cov)
+
+max_cov <- format(sapply(df.year,max, na.rm = TRUE), scientific = FALSE)
+max_cov <- as.data.frame(max_cov)
+
+mean_cov <- format(sapply(df.year,mean, na.rm = TRUE), scientific = FALSE)
+mean_cov <- as.data.frame(mean_cov)
+
+var <- data.frame(min_cov, max_cov, mean_cov)
+
+write.csv(var, "info_variables_population.csv")
+
+```
+
+### 4.2.3. Plots of variables correlated with WolfPopSize
+
+```{r}
+# calculate coefficients for each variable
+
+# format
+max_cov_t <- as.data.frame(t(max_cov))
+str(max_cov_t)
+max_cov_t[c(1:42)] <- as.numeric(max_cov_t[c(1:42)])
+
+# coefficients
+coeff_attacksDogs <- max_cov_t$wolfPopSize/max_cov_t$sum_AttackDogs_last5y
+
+coeff_attacksSheep <- max_cov_t$wolfPopSize/max_cov_t$sum_NoAffectedSheep_last5y
+
+coeff_wolvesKilled <- max_cov_t$wolfPopSize/max_cov_t$sum_wolfLKill_last5y
+
+coeff_moose <- max_cov_t$wolfPopSize/max_cov_t$hunt_county2
+
+coeff_income <- max_cov_t$wolfPopSize/max_cov_t$mean_IndividualIncome
+
+coeff_bear <- max_cov_t$wolfPopSize/max_cov_t$mean_bear_density_BZtiff
+
+coeff_wolfNeigh <- max_cov_t$wolfPopSize/max_cov_t$mean_number_neighbour_terr
+```
+
+
+```{r}
+# plots
+# DISCRETE
+plot_wolvesKilled <- 
+  ggplot(df.year)  + 
+  scale_linetype_manual("", values = 1) +
+  geom_col(aes(x=year, y=sum_wolfLKill_last5y, group = 1, fill = "#660000"))+
+  geom_line(aes(x=year, y=wolfPopSize / coeff_wolvesKilled, linetype = "Wolf population size"), colour = "black")+
+  scale_y_continuous(name = "Number of wolves killed",
+                     sec.axis = sec_axis(~.*coeff_wolvesKilled, name = "Wolf population size", 
+                                         breaks = seq(0, 80, by = 10))) +
+  scale_fill_manual('', values = '#660000', label = 'Number of wolves legally killed (5 years)') +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  xlab("Year")
+
+###
+plot_dogs <- 
+  ggplot(df.year)  + 
+  scale_linetype_manual("", values = 1) +
+  geom_col(aes(x=year, y=sum_AttackDogs_last5y, group = 1, fill = "tan2"))+
+  geom_line(aes(x=year, y=wolfPopSize / coeff_attacksDogs, linetype = "Wolf population size"), colour = "black")+
+  scale_y_continuous(name = "Number of dogs attacked",
+                     sec.axis = sec_axis(~.*coeff_attacksDogs, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  scale_fill_manual('', values = 'tan2', label = 'Number of dogs attacked (5 years)') +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  xlab("Year")
+
+###
+plot_sheep <- 
+  ggplot(df.year)  + 
+  scale_linetype_manual("", values = 1) +
+  geom_col(aes(x=year, y=sum_NoAffectedSheep_last5y, group = 1, fill = "sienna3"))+
+  geom_line(aes(x=year, y=wolfPopSize / coeff_attacksSheep, linetype = "Wolf population size"), colour = "black")+
+  scale_y_continuous(name = "Number of sheep attacked",
+                     sec.axis = sec_axis(~.*coeff_attacksSheep, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  scale_fill_manual('', values = 'sienna3', label = 'Number of sheep attacked (5 years)') +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  xlab("Year")
+
+plot_grid(plot_wolvesKilled,plot_sheep,plot_dogs)
+
+###
+# CONTINUOUS
+
+plot_income <- ggplot(df.year, aes(x = year)) +
+  geom_line(aes(y = mean_IndividualIncome, colour = "Average annual income per municipality"), linewidth = 0.8) +
+  geom_line(aes(y = wolfPopSize / coeff_income, colour = "Wolf population size"), linewidth = 0.8) +
+  scale_color_manual(values = c("#006600", "black")) +
+  scale_y_continuous(name = "Individual income",
+                     sec.axis = sec_axis(~.*coeff_income, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  labs(x = "Year",
+       colour = "")
+
+
+###
+plot_bear <- ggplot(df.year, aes(x = year)) +
+  geom_line(aes(y = mean_bear_density_BZtiff, colour = "Bear harvest (number/km2)"), linewidth = 0.8) +
+  geom_line(aes(y = wolfPopSize / coeff_bear, colour = "Wolf population size"), linewidth = 0.8) +
+  scale_color_manual(values = c("#0066CC", "black")) +
+  scale_y_continuous(name = "Bear harvest (number/km2)",
+                     sec.axis = sec_axis(~.*coeff_bear, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  labs(x = "Year",
+       colour = "")
+
+###
+plot_moose <- ggplot(df.year, aes(x = year)) +
+  geom_line(aes(y = hunt_county2, colour = "Moose harvest (number/1000ha)"), linewidth = 0.8) +
+  geom_line(aes(y = wolfPopSize / coeff_moose, colour = "Wolf population size"), linewidth = 0.8) +
+  scale_color_manual(values = c("#FF9999", "black")) +
+  scale_y_continuous(name = "Moose harvest",
+                     sec.axis = sec_axis(~.*coeff_moose, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  labs(x = "Year",
+       colour = "")
+
+###
+plot_wolfNeigh <- ggplot(df.year, aes(x = year)) +
+  geom_line(aes(y = mean_number_neighbour_terr, colour = "Neighboring wolf territories"), linewidth = 0.8) +
+  geom_line(aes(y = wolfPopSize / coeff_moose, colour = "Wolf population size"), linewidth = 0.8) +
+  scale_color_manual(values = c("#9966CC", "black")) +
+  scale_y_continuous(name = "Number of neighboring wolf territories",
+                     sec.axis = sec_axis(~.*coeff_wolfNeigh, name = "Wolf population size",
+                                         breaks = seq(0, 80, by = 10))) +
+  theme_light() +
+  theme(
+    axis.title.y = element_text(size=14),
+    axis.title.y.right = element_text(size=14),
+    legend.position = "bottom",
+    legend.box.margin=margin(-12,0,-5,0),
+    legend.text=element_text(size=12)
+  ) +
+  labs(x = "Year",
+       colour = "")
+
+###
+plot_grid(plot_income, plot_moose, plot_bear, plot_wolfNeigh, nrow=2)
+
+###
+plot_grid(plot_wolvesKilled,plot_sheep,plot_dogs,plot_income, plot_moose, plot_bear, plot_wolfNeigh, nrow=4)
+
+
+
+```
+
+
+## 4.3. Municipality level
+
+```{r}
+## Model input data - Municipality level
+# summarise territory data per municipality ------------------------------------
+municipalityTerritoryStats <-
+  dataToModel8 %>%
+  group_by(territory, Spring) %>%
+  slice_max(mean_fi, with_ties = FALSE) %>%
+  ungroup() %>%
+  arrange(territory, Spring) %>%
+  dplyr::mutate(year = Spring, .before = mod_id) %>%
+  group_by(NAME_2) %>%
+  dplyr::summarise(
+    wolfPopSize = length(unique(territory)),
+    disappearance = sum(Fate == "illegal", na.rm = TRUE),
+    n_territories_without_disap = wolfPopSize - disappearance,
+    prop_disappearance = disappearance / wolfPopSize,
+  ) 
+
+#head(municipalityTerritoryStats, n=30)
+# proportion of disappearance per municipality
+p <-
+  ggplot(municipalityTerritoryStats,
+         aes(x = reorder(NAME_2,+prop_disappearance),
+             y = prop_disappearance)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90))
+p
+
+municipalityTerritoryFeatures <-
+  territoriesToModel %>%
+  dplyr::mutate(year = Spring, .before = mod_id) %>%
+  #dplyr::filter(Fate_binary == 1) %>% # filter only disappearances
+  dplyr::group_by(NAME_2) %>%
+  dplyr::summarise(
+    mean_ruggedness = mean(ruggedness_mean, na.rm = TRUE),
+    average_gravel_km = mean(average_gravel_km, na.rm = TRUE),
+    average_paved_km = mean(average_paved_km, na.rm = TRUE),
+    pop_mean = mean(pop_mean, na.rm = TRUE),
+    mean_snow = mean(mean_snow, na.rm = TRUE),
+    mean_artificial_area_total = mean(artificial_area_total, na.rm = TRUE),
+    hunt_county2 = mean(hunt_county2, na.rm = TRUE),
+    mean_fi = mean(mean_fi, na.rm = TRUE),
+    mean_maxfi = mean(max_fi, na.rm = TRUE),
+    mean_number_neighbour_terr = mean(number_neighbour_terr, na.rm = TRUE),
+    mean_bear_density_BZtiff = mean(bear_density_BZtiff, na.rm = TRUE),
+    sum_wolfLKill_n = sum(wolfLKill_n, na.rm = TRUE),
+    sum_wolfLKill_last5y = sum(wolfLKill_last5y, na.rm = TRUE),
+    sum_sheepAttacks_n = sum(sheepAttacks_n, na.rm = TRUE),
+    sum_NoAffectedSheep_last5y = sum(NoAffectedSheep_last5y, na.rm = TRUE),
+    sum_AttackDogs_n = sum(AttackDogs_n, na.rm = TRUE),
+    sum_AttackDogs_last5y = sum(AttackDogs_last5y, na.rm = TRUE),
+    mean_IndividualIncome = mean(IndividualIncome, na.rm = TRUE),
+    mean_income_prop = mean(income_prop, na.rm = TRUE),
+    n = n()
+  ) %>%
+  arrange(NAME_2)
+
+municipalityTerritoryStats <-
+  municipalityTerritoryStats %>%
+  dplyr::filter(
+    NAME_2 %in% unique(municipalityTerritoryFeatures$NAME_2)
+  )
+
+df.municipality <-
+  left_join(
+    municipalityTerritoryStats,
+    municipalityTerritoryFeatures,
+    by = c('NAME_2' = 'NAME_2')
+  )
+
+view(df.municipality)
+# double checking 
+# head(df.municipality)
+# table(df.municipality$sum_fate)
+# sum((df.municipality$sum_fate))
+# sum((df.municipality$n_territories))
+
+# scale covariates
+df.municipality$mean_ruggedness_sc = scale(df.municipality$mean_ruggedness)[,1]      
+df.municipality$average_gravel_km_sc = scale(df.municipality$average_gravel_km)[,1] 
+df.municipality$average_paved_km_sc = scale(df.municipality$average_paved_km)[,1] 
+df.municipality$pop_mean_sc = scale(df.municipality$pop_mean)[,1]            
+df.municipality$mean_snow_sc = scale(df.municipality$mean_snow)[,1] 
+df.municipality$mean_artificial_area_total_sc = scale(df.municipality$mean_artificial_area_total)[,1]
+df.municipality$hunt_county2_sc = scale(df.municipality$hunt_county2)[,1]
+df.municipality$mean_fi_sc = scale(df.municipality$mean_fi)[,1] 
+df.municipality$mean_maxfi_sc = scale(df.municipality$mean_maxfi)[,1]
+df.municipality$mean_number_neighbour_terr_sc = scale(df.municipality$mean_number_neighbour_terr)[,1]
+df.municipality$mean_bear_density_BZtiff_sc = scale(df.municipality$mean_bear_density_BZtiff)[,1]
+#sum_wolfLKill_n = wolfLKill_n # count data - not scaled 
+df.municipality$sum_wolfLKill_last5y_sc = scale(df.municipality$sum_wolfLKill_last5y)[,1]
+#sum_sheepAttacks_n = sheepAttacks_n # count data - not scaled 
+df.municipality$sum_NoAffectedSheep_last5y_sc = scale(df.municipality$sum_NoAffectedSheep_last5y)[,1]
+#sum_AttackDogs_n = AttackDogs_n # count data - not scaled 
+df.municipality$sum_AttackDogs_last5y_sc = scale(df.municipality$sum_AttackDogs_last5y)[,1] 
+df.municipality$mean_IndividualIncome_sc = scale(df.municipality$mean_IndividualIncome)[,1] # count data - not scaled 
+df.municipality$mean_income_prop_sc = scale(df.municipality$mean_income_prop)[,1]
+df.municipality$wolfPopSize_sc = scale(df.municipality$wolfPopSize)[,1]
+
+write.csv2(df.municipality,
+           'modelInputData/df.municipality.csv')
+```
+
+### 4.3.1. Correlations 
+
+```{r}
+# Note: covariate correlation had to be calculated for the different scales as big discrepancies between scales were detected
+colnames(df.municipality)
+df.municipality2 <- df.municipality[2:24]
+
+covToCorrelate_mun <- df.municipality2 %>%
+  select(-c("disappearance", "n_territories_without_disap"))
+
+cormat <- round(
+  cor(
+    covToCorrelate_mun,
+    use = "pairwise.complete.obs",
+    method = "spearman"),
+  2)
+
+cormat
+upper_tri <- get_upper_tri(cormat)
+melted_cormat <- reshape2::melt(upper_tri, na.rm = TRUE)
+
+p1_mun <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - continuous variables") + 
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,
+                                   hjust = 1, size = 13)) +
+  theme(axis.text.y = element_text(size = 13)) +
+  geom_text(aes(Var2, Var1, label = value), color = "white", size = 4.5)
+p1_mun  
+
+# highlyCorrelatedVars <- melted_cormat %>%
+#   filter(value >0.5 | value < -0.5)
+# #highlyCorrelatedVars
+
+## correlation between metrics for the same variable ---------------------------
+VarsToTest <- c("sum_AttackDogs_last5y",
+                "sum_AttackDogs_n") # keep sum_AttackDogs_last5y
+
+VarsToTest <- c("sum_sheepAttacks_n",
+                "sum_NoAffectedSheep_last5y") # keep sum_NoAffectedSheep_last5y
+
+VarsToTest <- c("sum_wolfLKill_n",
+                "sum_wolfLKill_last5y") # keep sum_wolfLKill_last5y
+
+VarsToTest <- c("average_gravel_km",
+                "average_paved_km") # keep average_gravel_km
+
+VarsToTest <- c("mean_IndividualIncome",
+                "mean_income_prop") # keep mean_income_prop
+
+VarsToTest <- c("mean_fi",
+                "mean_maxfi") # keep mean_fi
+
+subset <- covToCorrelate %>%
+  select(all_of(VarsToTest))
+
+sub_cormat <- round(
+  cor(
+    subset,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri <- get_upper_tri(sub_cormat)
+sub_melted_cormat <-
+  reshape2::melt(sub_upper_tri, na.rm = TRUE)
+
+p2_sub <- ggplot(sub_melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Population level") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p2_sub
+
+# subset the covariates to keep
+subset_keep <- covToCorrelate_mun[c("wolfPopSize","mean_ruggedness",
+                                "average_gravel_km",
+                                "mean_artificial_area_total",
+                                "pop_mean","mean_snow","sum_AttackDogs_last5y",
+                                "sum_NoAffectedSheep_last5y",
+                                "sum_wolfLKill_last5y",
+                                "hunt_county2","mean_income_prop",
+                                "mean_bear_density_BZtiff",
+                                "mean_number_neighbour_terr",
+                                "mean_fi")]
+
+# change covariates names
+colnames(subset_keep) <- c("WolfPopSize","TerrRug","GravelRoad",
+                           "ArtificialArea","HumanDens","SnowCover",
+                           "DogAttacks_last5y","SheepAttacks_last5y",
+                           "LegWolfHarv_last5y","MooseHarv","IncomeProp",
+                           "BearHarv","WolfNeighbourTerr","Mean_InbreedCoef")
+
+## correlation between covariates representing the same mechanism --------------
+VarsToTest2 <- c("TerrRug",
+                 "GravelRoad",
+                 "ArtificialArea",
+                 "HumanDens",
+                 "SnowCover")
+
+VarsToTest2 <- c("DogAttacks_last5y",
+                 "SheepAttacks_last5y",
+                 "LegWolfHarv_last5y",
+                 "MooseHarv",
+                 "IncomeProp")  
+
+VarsToTest2 <- c("BearHarv",
+                 "WolfNeighbourTerr")
+
+sub_VarsToTest2 <- subset_keep %>%
+  select(all_of(VarsToTest2))
+
+sub_cormat2 <- round(
+  cor(
+    sub_VarsToTest2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri2 <- get_upper_tri(sub_cormat2)
+sub_melted_cormat2 <-
+  reshape2::melt(sub_upper_tri2, na.rm = TRUE)
+
+p3_sub <- ggplot(sub_melted_cormat2, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Municipality level - Socio-economic") +
+  #change title depending on the hypothesis
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p3_sub
+
+## correlations between chosen variables ---------------------------------------
+
+sub_cormat3 <- round(
+  cor(
+    subset_keep,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri3 <- get_upper_tri(sub_cormat3)
+sub_melted_cormat3 <-
+  reshape2::melt(sub_upper_tri3, na.rm = TRUE)
+
+p4_sub <- ggplot(sub_melted_cormat3, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Municipality level - Chosen variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p4_sub
+
+
+## correlations of final covariates --------------------------------------------
+
+subset_keep2 <- subset_keep[c("WolfPopSize","TerrRug","MooseHarv",
+                              "IncomeProp","WolfNeighbourTerr","Mean_InbreedCoef")]
+
+sub_cormat4 <- round(
+  cor(
+    subset_keep2,
+    use = "pairwise.complete.obs",
+    method = "spearman"),2
+)
+
+sub_upper_tri4 <- get_upper_tri(sub_cormat4)
+sub_melted_cormat4 <-
+  reshape2::melt(sub_upper_tri4, na.rm = TRUE)
+
+p5_sub <- ggplot(sub_melted_cormat4, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_viridis_c() +
+  ggtitle(label = "Spearman correlation - Municipality level - Final variables") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    vjust = 1,
+    hjust = 1,
+    size = 16
+  )) +
+  theme(axis.text.y = element_text(size = 16)) +
+  geom_text(aes(Var2, Var1, label = value),
+            color = "white",
+            size = 6)
+p5_sub
+```
+
+### 4.3.2. Calculate min, max and mean
+
+```{r}
+
+min_cov <- format(sapply(df.municipality,min, na.rm = TRUE), scientific = FALSE)
+min_cov <- as.data.frame(min_cov)
+
+max_cov <- format(sapply(df.municipality,max, na.rm = TRUE), scientific = FALSE)
+max_cov <- as.data.frame(max_cov)
+
+mean_cov <- format(sapply(df.municipality,mean, na.rm = TRUE), scientific = FALSE)
+mean_cov <- as.data.frame(mean_cov)
+
+var <- data.frame(min_cov, max_cov, mean_cov)
+
+write.csv(var, "info_variables_municipality.csv")
+
+```
+
+
