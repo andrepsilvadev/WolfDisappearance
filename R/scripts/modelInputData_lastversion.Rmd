@@ -379,81 +379,117 @@ dataToModel4 <- left_join(dataToModel3,
 ## 3.6. Individual income
 
 ```{r}
-# individual income data (1991-2021, only Sweden) per municipality
 
-# individual income was extracted for Sweden and Norway separately 
-# is my understanding that both refer to gross income. Norway data is NOK, Sweden data is in SEK - I have ignored the difference 
-# the links used for extraction are
-# Sweden https://www.scb.se/en/finding-statistics/statistics-by-subject-area/household-finances/income-and-income-distribution/income-and-tax-statistics/
-# Norway https://www.ssb.no/en/statbank/table/05854/
+# Load necessary library
+library(readr)
+library(dplyr)
+library(readxl)
+library(tidyr)
 
-individualIncomeDataSweden <- readr::read_csv("rawData/avg_income_municipalities_1991_2021.csv",
-                              locale = locale(encoding = "ISO-8859-1")) %>%
-  tidyr::gather(key="Year", value ="IndividualIncome", -Kommun) %>%
-  separate_wider_delim(Year, "_", names = c("x", "Year")) %>%
-  dplyr::mutate(Year = as.numeric(Year)) %>%
-  dplyr::mutate(Kommun = str_replace(Kommun, ' LÄN', '')) %>%
-  dplyr::mutate(Kommun = str_to_title(Kommun)) %>% # turns first letter of each word in caps
-  dplyr::mutate(Kommun = str_replace(Kommun, "Upplands Väsby", "Upplands-Väsby")) %>%
-  dplyr::mutate(Kommun = str_replace(Kommun, "Heby2", "Heby")) %>%
-  dplyr::mutate(Kommun = str_replace(Kommun, " ", "")) %>% # remove possible empty spaces %>%
-  select(-x) %>%
-  # replace zeros from kommunes with no data in early years
-  dplyr::mutate(IndividualIncome=ifelse(IndividualIncome==0,NA,IndividualIncome))
+# notes for norway data download
+
+# Rømskog municipality in Norway no longer exists under that name.
+# On January 1, 2020, Rømskog merged with Aurskog-Høland municipality
+# in Viken County. So now, Rømskog is part of Aurskog-Høland.
+# norway average gross individual income was extracted from https://www.ssb.no/en/statbank/table/05854/
+# codes in kommun original were removed manually in excel, column names were also edited manually 
 
 
-# data from Norway
-# add to manually remove contact details and comments from the
-# bottom of the original excel file
-# found the unique kommunes in the monitoring dataset for Norway
-# selected manually in the norway income datafile
-# data for Romskog fo2020 and 2021 seems to be missing
-# valer there were two. Had to manually go to the wolf dataset and see where the geographic location matched.
-# It is identified in the income dataset as Våler while the other Våler found in the income
-# dataset I have identified as Våler2
+# Load the CSV file
+file_path <- "data/rawData/income_forWolf/05854_MainEntriesFromTheTaxAssessmentForResidents17yearsAndOlder_individualIncomeNorway_edited.csv"
+df <- read_delim(file_path, delim = ";", col_types = cols(.default = "c"))
 
-individualIncomeDataNorway <- readr::read_csv("rawData/Norway_averageIndividualGrossIncome1991_2021_municipalities1965_manuallyEdited.csv") %>%
+# Delete the column 'kommun subset'
+filtered_df <- df %>% select(-`kommun original`, -`age`, -`metric`)
+
+# Convert all columns, except column "kommun", to numeric
+filtered_df <- filtered_df %>%
+  mutate(across(-kommun, ~ suppressWarnings(as.numeric(.))))
+
+# Calculate row means and then summarize to one row per group
+df_sum <- filtered_df %>%
   group_by(kommun) %>%
-  select(-c("kommun original","age","metric")) %>%
-  dplyr::summarise(across(everything(), sum)) %>%
-  dplyr::mutate(across(where(is.numeric), ~na_if(., 0))) %>% # replaces NAs across all dataframe
-  pivot_longer(cols=c(2:24),
-               names_to='Year',
-               values_to='IndividualIncome') %>%
-  dplyr::rename(Kommun = kommun) %>%
-  dplyr::mutate(Year = as.numeric(Year))
+  summarize(across(where(is.numeric), sum, na.rm = TRUE))
 
-individualIncomeData <- bind_rows(individualIncomeDataSweden,individualIncomeDataNorway) %>%
-  # difference to year average to remove correlation with year (income increases over year)
-  group_by(Year) %>%
-  dplyr::mutate(year_average = mean(IndividualIncome,na.rm = TRUE),
-         income_prop = IndividualIncome/year_average)
+# Replace zeros with NAs
+df_sum <- df_sum %>%
+  mutate(across(where(is.numeric), ~ na_if(.x, 0))) %>%
+  mutate(country = "Norway") %>%
+  select(country, everything())
 
-# head(individualIncomeData)
-# view(individualIncomeData)
+# View the filtered dataframe
+View(df_sum)
 
-# the following observations seem to have the wrong country attributed based on the kommune assigned. The kommune 
-# was double-checked with the overlap with gadmn kommunes
-kommunesWithWrongCountry <- c("Aurskog-Høland","Enebakk","Aremark","Dals-Ed",
-                              "Halden","Rømskog","Åsnes","Eidskog","Grue",
-                              "Kongsvinger","Trysil","Våler")  
+# notes for sweden data download
+# excel was manually edited to remove first row and last rows
+# kommun name only available at the first row for each kommun and was manually inputed for the remaining ages
+# Before 2003 Knivsta was part of Uppsala Municipality and hence the NA values 
+# swedish income data was extracted from Total earned income for residents in Sweden throughout the year by region, gender, age and income class. Years 1999 - 2023
+# https://www.statistikdatabasen.scb.se/pxweb/sv/ssd/START__HE__HE0110__HE0110A/SamForvInk1/
+# kommun names for all the age groups were manually edited as the original table only had them for the first line of each kommun 
+# needed to work in excel at this step since the kommun names in Swedish were not reading correctly when trying with csv
 
-dataToModel4 <-
-  dataToModel4 %>%
-  dplyr::mutate(
-    Country_fatefile = ifelse(
-      NAME_2 %in% kommunesWithWrongCountry,
-      str_replace(Country_fatefile, "S", "N"),
-      Country_fatefile
-    )
-  )
+# Load the Excel file
+file_path2 <- "data/rawData/income_forWolf/Sweden_HE0110J7_20250301-210646_edited.xlsx"
+df2 <- read_excel(file_path2)
+View(df2)
+# Remove columns
+df2 <- df2 %>% select(-age, -metric)
 
-dataToModel5 <-
-  left_join(
-    dataToModel4,
-    individualIncomeData,
-    by = c('NAME_2' = 'Kommun', 'Autumn' = 'Year')
-    )
+# Convert all columns, except column "kommun", to numeric
+df2 <- df2 %>%
+  mutate(across(-kommun, ~ suppressWarnings(as.numeric(.))))
+
+# Calculate row means and then summarize to one row per group
+df2_avg <- df2 %>%
+  group_by(kommun) %>%
+  summarize(across(where(is.numeric), mean))
+
+# Multiply all numeric values by a thousand and reduce decimal places to zero
+# This is because the values in the Excel file are in K SEK
+df2_avg <- df2_avg %>%
+  mutate(across(where(is.numeric), ~ round(.x * 1000, 0))) %>%
+  mutate(country = "Sweden") %>%
+  select(country, everything())
+
+View(df2_avg)
+
+# notes merging the two dataframes
+# I have ignored that norway data is in NOK and swedish data is in SEK
+
+# Merge df2_avg and df_sum by columns with the same name
+merged_df <- full_join(df_sum, df2_avg, by = intersect(names(df_sum), names(df2_avg)))
+
+# View the merged dataframe
+View(merged_df)
+
+# Calculate the average of each year
+yearly_avg <- merged_df %>%
+  summarize(across(where(is.numeric), mean, na.rm = TRUE))
+
+# Divide each cell of a given year by the mean of the same year
+normalized_df <- merged_df %>%
+  mutate(across(where(is.numeric), ~ . / yearly_avg[[cur_column()]]))
+
+# View the normalized dataframe
+View(normalized_df)
+
+# Save the merged dataframe to a new CSV file
+# write_csv(normalized_df, "data/rawData/income_forWolf/Merged_Data.csv")
+
+# Pivot normalized_df to have columns: country, kommun, year, and value
+pivoted_df <- normalized_df %>%
+  pivot_longer(cols = -c(country, kommun), names_to = "year", values_to = "value")
+
+# View the pivoted dataframe
+View(pivoted_df)
+
+#dataToModel5 <-
+#  left_join(
+#    dataToModel4,
+#    pivoted_df,
+# by = c('NAME_2' = 'Kommun', 'Autumn' = 'Year') columns need to be checked here to match new dataToModel4 
+#    )
 ```
 
 
