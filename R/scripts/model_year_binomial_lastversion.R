@@ -8,7 +8,7 @@ library(AICcmodavg)
 
 
 # data -------------------------------------------------------------------------
-modeldatascaled_year <- read.csv2('modelInputData/df.year.csv') #%>%
+modeldatascaled_year <- read.csv2('modelInputData_new/df.year.csv') #%>%
   # select years where there was at least one cbind(disappearance,wolfPopSize-disappearance), excludes year 2000
   #filter(year %in% (2000:2017)) # match year range from Liberg et al 2020
 
@@ -60,9 +60,9 @@ Cand.mod[[2]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_ruggedness_sc +
-      mean_artificial_area_total_sc +
-      pop_mean_sc,
+      gravel_sc +
+      snow_cover_sc +
+      human_density_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -108,6 +108,7 @@ with(summary(Cand.mod[[3]]), 1 - deviance / null.deviance)
 
 # list of candidate models
 Cand.mod2 <- list()
+
 # best second stage
 Cand.mod2[[1]] <-
   glm(
@@ -121,7 +122,7 @@ Cand.mod2[[2]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_fi_sc,
+      inbreeding_disapp_sc,
     family = binomial,
     data = modeldatascaled_year
   )

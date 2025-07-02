@@ -4,7 +4,7 @@
 model_pop_1 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_AttackDogs_last5y_sc,
+      NoAffectedDogs_last5y_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -16,7 +16,7 @@ with(summary(model_pop_1), 1 - deviance/null.deviance)
 model_pop_2 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_NoAffectedSheep_last5y_sc,
+      NoAffectedSheep_last5y_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -28,7 +28,7 @@ with(summary(model_pop_2), 1 - deviance/null.deviance)
 model_pop_3 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_wolfLKill_last5y_sc,
+      wolfLKill_last5y_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -40,7 +40,7 @@ with(summary(model_pop_3), 1 - deviance/null.deviance)
 model_pop_4 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      hunt_county2_sc,
+      moose_harvest_density_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -52,7 +52,7 @@ with(summary(model_pop_4), 1 - deviance/null.deviance)
 model_pop_5 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      mean_income_prop_sc,
+      income_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -60,11 +60,11 @@ summary(model_pop_5)
 confint(model_pop_5)
 with(summary(model_pop_5), 1 - deviance/null.deviance)
 
-### Bear harvest
+### Bear density
 model_pop_6 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      mean_bear_density_BZtiff_sc,
+      bear_density_live_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -76,7 +76,7 @@ with(summary(model_pop_6), 1 - deviance/null.deviance)
 model_pop_7 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      mean_number_neighbour_terr_sc,
+      number_neighbour_terr_sc,
     family = binomial,
     data = modeldatascaled_year
   )
@@ -84,13 +84,25 @@ summary(model_pop_7)
 confint(model_pop_7)
 with(summary(model_pop_7), 1 - deviance/null.deviance)
 
+### terrain ruggedness
+model_pop_8 <-
+  glm(
+    cbind(disappearance, wolfPopSize - disappearance) ~
+      ruggedness_sc,
+    family = binomial,
+    data = modeldatascaled_year
+  )
+summary(model_pop_8)
+confint(model_pop_8)
+with(summary(model_pop_8), 1 - deviance/null.deviance)
+
 -------------------------------------------------------------------------------
 # Variables to test for municipality scale:
 ### Length gravel roads
 model_mun_1 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      average_gravel_km_sc,
+      gravel_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -102,7 +114,7 @@ with(summary(model_mun_1), 1 - deviance/null.deviance)
 model_mun_2 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      pop_mean_sc,
+      human_density_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -114,7 +126,7 @@ with(summary(model_mun_2), 1 - deviance/null.deviance)
 model_mun_3 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_AttackDogs_last5y_sc,
+      NoAffectedDogs_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -126,7 +138,7 @@ with(summary(model_mun_3), 1 - deviance/null.deviance)
 model_mun_4 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_NoAffectedSheep_last5y_sc,
+      NoAffectedSheep_last5y_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -138,7 +150,7 @@ with(summary(model_mun_4), 1 - deviance/null.deviance)
 model_mun_5 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      sum_wolfLKill_last5y_sc,
+      wolfLKill_last5y_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -150,7 +162,7 @@ with(summary(model_mun_5), 1 - deviance/null.deviance)
 model_mun_6 <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
-      mean_bear_density_BZtiff_sc,
+      bear_density_live_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -158,4 +170,38 @@ summary(model_mun_6)
 confint(model_mun_6)
 with(summary(model_mun_6), 1 - deviance/null.deviance)
 
+### Length paved roads
+model_mun_7 <-
+  glm(
+    cbind(disappearance, wolfPopSize - disappearance) ~
+      paved_sc,
+    family = binomial,
+    data = modeldatascaled_municipality
+  )
+summary(model_mun_7)
+confint(model_mun_7)
+with(summary(model_mun_7), 1 - deviance/null.deviance)
 
+### snow cover
+model_mun_8 <-
+  glm(
+    cbind(disappearance, wolfPopSize - disappearance) ~
+      snow_cover_sc,
+    family = binomial,
+    data = modeldatascaled_municipality
+  )
+summary(model_mun_8)
+confint(model_mun_8)
+with(summary(model_mun_8), 1 - deviance/null.deviance)
+
+### night light
+model_mun_9 <-
+  glm(
+    cbind(disappearance, wolfPopSize - disappearance) ~
+      night_light_sc,
+    family = binomial,
+    data = modeldatascaled_municipality
+  )
+summary(model_mun_9)
+confint(model_mun_9)
+with(summary(model_mun_9), 1 - deviance/null.deviance)

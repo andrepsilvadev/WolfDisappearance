@@ -6,7 +6,7 @@
 # data -------------------------------------------------------------------------
 # Note: I am modelling variation of proportion of disappearance within areas
 # where disappearances took place
-modeldatascaled_municipality <- read.csv2('modelInputData/df.municipality.csv') #%>%
+modeldatascaled_municipality <- read.csv2('modelInputData_new/df.municipality.csv') #%>%
   # select municipalities where there was at least one disappearance
   #filter(disappearance>=1)
 View(modeldatascaled_municipality)
@@ -50,8 +50,7 @@ Cand.mod[[2]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      hunt_county2_sc +
-      mean_income_prop_sc,
+      income_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -61,7 +60,7 @@ Cand.mod[[3]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_ruggedness_sc,
+      ruggedness_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -69,9 +68,8 @@ Cand.mod[[3]] <-
 # global model
 Cand.mod[[4]] <- glm(cbind(disappearance, wolfPopSize-disappearance) ~
                        wolfPopSize_sc +
-                       hunt_county2 +
-                       mean_income_prop_sc +
-                       mean_ruggedness_sc,
+                       income_sc +
+                       ruggedness_sc,
                      family = binomial,
                      data = modeldatascaled_municipality)
 # null model
@@ -81,7 +79,7 @@ Cand.mod[[5]] <- glm(cbind(disappearance, wolfPopSize-disappearance) ~
                      data = modeldatascaled_municipality)
 
 Modnames <- c("Wolf Population Size",
-              "Pop Size + Poaching + socioeconomic",
+              "Pop Size + Poaching + socio",
               "Pop Size + Poaching + access",
               "Global",
               "Null")
@@ -90,9 +88,11 @@ Modnames <- c("Wolf Population Size",
 aictab1 <- aictab(cand.set = Cand.mod, modnames = Modnames)
 aictab1
 summary(Cand.mod[[1]])
+summary(Cand.mod[[2]])
 summary(Cand.mod[[3]])
+summary(Cand.mod[[4]])
 confint(Cand.mod[[1]])
-confint(Cand.mod[[3]])
+confint(Cand.mod[[4]])
 # explanatory power
 with(summary(Cand.mod[[1]]), 1 - deviance/null.deviance)
 # dispersion
@@ -120,7 +120,7 @@ Cand.mod2[[2]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_fi_sc,
+      inbreeding_disapp_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -130,7 +130,7 @@ Cand.mod2[[3]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_number_neighbour_terr_sc,
+      number_neighbour_terr_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -140,8 +140,8 @@ Cand.mod2[[4]] <-
   glm(
     cbind(disappearance, wolfPopSize - disappearance) ~
       wolfPopSize_sc +
-      mean_fi_sc +
-      mean_number_neighbour_terr_sc,
+      inbreeding_disapp_sc +
+      number_neighbour_terr_sc,
     family = binomial,
     data = modeldatascaled_municipality
   )
@@ -168,9 +168,9 @@ aictab2
 write_csv2(aictab2,'output/binomial_municipalityLevel_aictab_stage3.csv')
 
 summary(Cand.mod2[[1]])
-summary(Cand.mod2[[2]])
+summary(Cand.mod2[[4]])
 confint(Cand.mod2[[1]])
-confint(Cand.mod2[[2]])
+confint(Cand.mod2[[4]])
 with(summary(Cand.mod2[[4]]), 1 - deviance/null.deviance)
 
 # save output
